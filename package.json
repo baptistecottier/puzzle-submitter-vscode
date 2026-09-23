@@ -2,7 +2,7 @@
   "name": "puzzle-submitter",
   "displayName": "Puzzle Submitter",
   "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "baptistecottier",
   "license": "MIT",
   "icon": "icon.png",
