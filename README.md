@@ -3,6 +3,13 @@
 Submit puzzle answers to Advent of Code, Everybody Codes, Codyssi, i18n-puzzles and
 Coding Quest without leaving VS Code.
 
+## Install
+
+From the Marketplace: search **Puzzle Submitter** in VS Code's Extensions view, or install
+directly from [marketplace.visualstudio.com/items?itemName=baptistecottier.puzzle-submitter](https://marketplace.visualstudio.com/items?itemName=baptistecottier.puzzle-submitter).
+
+To hack on the source instead, see Setup below.
+
 ## Setup
 
 1. `npm install`
@@ -18,8 +25,10 @@ Coding Quest without leaving VS Code.
 
 ## Commands
 
-- **Puzzle Submitter: Submit Answer** — detects the puzzle from the active file (or asks),
-  gets an answer (typed, or from a configured command), and submits it.
+- **Puzzle Submitter: Submit Answer** — detects the puzzle from the active file (or asks).
+  When it's auto-detected, you get a quick chance to confirm or change the guessed part
+  (the extension only knows what it's seen you submit itself, so it can guess wrong).
+  Then it gets an answer (typed, or from a configured command) and submits it.
 - **Puzzle Submitter: Fetch Input** — aoc/everybodycodes only. Downloads (and for
   Everybody Codes, decrypts) the puzzle input, and never re-downloads if already cached
   locally.
