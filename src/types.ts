@@ -1,3 +1,5 @@
+import * as vscode from 'vscode';
+
 export type SiteId = 'aoc' | 'everybodycodes' | 'codyssi' | 'i18n-puzzles' | 'codingquest';
 
 export interface PuzzleContext {
@@ -16,6 +18,15 @@ export interface SubmitResult {
   message: string;
 }
 
+/** Raw input text per part number ("1", "2", "3", ...) — the one local-storage shape
+ * every provider reads/writes, regardless of how each site's own API/UI hands it out. */
+export type PuzzleInputParts = Record<string, string>;
+
+/** How a site's real solver(data) expects to receive PuzzleInputParts once loaded. */
+export type SolverInputShape =
+  | 'text' // solver(data: str) — data is the single relevant part's text (aoc, codyssi, i18n-puzzles, codingquest)
+  | 'parts-dict'; // solver(data: dict[int, str]) — data is every fetched part at once (everybodycodes)
+
 export interface PuzzleProvider {
   id: SiteId;
   label: string;
@@ -27,9 +38,17 @@ export interface PuzzleProvider {
   detect(relativeFilePath: string): PuzzleContext | undefined;
   /** Link to the puzzle's page on the site, for a human to open. */
   puzzleUrl(ctx: PuzzleContext): string;
-  /** Only implemented by sites with a known submission API (aoc, everybodycodes). */
-  fetchInput?(ctx: PuzzleContext, token: string, contact: string): Promise<string>;
+  /** Only implemented by sites with a known submission API (aoc, everybodycodes). Returns
+   * every part fetchable in one go, not just the requested one. */
+  fetchInput?(ctx: PuzzleContext, token: string, contact: string): Promise<PuzzleInputParts>;
   submit?(ctx: PuzzleContext, token: string, answer: string, contact: string): Promise<SubmitResult>;
-  /** Workspace-relative path fetchInput's result should be written to. Required alongside fetchInput. */
-  inputPath?(ctx: PuzzleContext): string;
+  /** Workspace-relative path this puzzle's local input is cached at. */
+  localInputPath(ctx: PuzzleContext): string;
+  /** Reads whatever's cached locally for this puzzle, if anything. */
+  readLocalInput(ctx: PuzzleContext, folder: vscode.WorkspaceFolder): PuzzleInputParts | undefined;
+  /** Merges `parts` into whatever's already cached (doesn't drop other parts already saved). */
+  writeLocalInput(ctx: PuzzleContext, folder: vscode.WorkspaceFolder, parts: PuzzleInputParts): void;
+  /** Set on every site: how its solver(data) wants PuzzleInputParts shaped. Presence of
+   * this field is what enables the "Run solver() from this file" runner. */
+  solverInputShape?: SolverInputShape;
 }

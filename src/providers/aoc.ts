@@ -1,4 +1,5 @@
 import { PuzzleContext, PuzzleProvider, SubmitResult } from '../types';
+import { readJsonParts, resolveLocalInputPath, writeJsonParts } from '../core/localInput';
 
 const DETECT_RE = /events\/year_(\d{4})\/day_(\d{2})\//;
 
@@ -55,6 +56,7 @@ export const aocProvider: PuzzleProvider = {
   id: 'aoc',
   label: 'Advent of Code',
   maxPart: 2,
+  solverInputShape: 'text',
   tokenPrompt:
     "Value of the 'session' cookie from adventofcode.com — log in, open dev tools → Application/Storage → Cookies.",
 
@@ -68,15 +70,27 @@ export const aocProvider: PuzzleProvider = {
     return `https://adventofcode.com/${ctx.group}/day/${ctx.index}`;
   },
 
-  inputPath(ctx: PuzzleContext) {
-    // Matches pythonfw/aocp.py's save_input_to_file exactly, so aocp picks up the same file.
+  localInputPath(ctx: PuzzleContext) {
+    // Same filename pythonfw/aocp.py's save_input_to_file writes, so aocp picks up the
+    // same file — its content is now JSON ({"1": ..., "2": ...}), see aocp.py's
+    // matching _read_local_input/save_input_to_file update.
     const day = ctx.index.padStart(2, '0');
     return `events/year_${ctx.group}/day_${day}/day_${day}.input`;
   },
 
+  readLocalInput(ctx, folder) {
+    return readJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)));
+  },
+
+  writeLocalInput(ctx, folder, parts) {
+    writeJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)), parts);
+  },
+
   async fetchInput(ctx, token, contact) {
     const response = await fetchAoc(`https://adventofcode.com/${ctx.group}/day/${ctx.index}/input`, token, contact);
-    return (await response.text()).replace(/\n$/, '');
+    const text = (await response.text()).replace(/\n$/, '');
+    // AoC has one input per day, shared by both parts.
+    return { '1': text, '2': text };
   },
 
   async submit(ctx, token, answer, contact) {

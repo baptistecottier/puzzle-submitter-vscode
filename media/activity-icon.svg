@@ -1,0 +1,10 @@
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <mask id="notch">
+    <rect x="5" y="5" width="14" height="14" rx="3" fill="white"/>
+    <circle cx="5" cy="12" r="2.5" fill="black"/>
+  </mask>
+  <g fill="currentColor">
+    <rect x="5" y="5" width="14" height="14" rx="3" mask="url(#notch)"/>
+    <polygon points="19,9 19,15 23,12"/>
+  </g>
+</svg>

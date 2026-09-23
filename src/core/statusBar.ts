@@ -7,7 +7,7 @@ let item: vscode.StatusBarItem | undefined;
 export function getStatusBarItem(): vscode.StatusBarItem {
   if (!item) {
     item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    item.command = 'puzzleSubmitter.submitAnswer';
+    item.command = 'puzzleSubmitter.panel.focus';
   }
   return item;
 }
@@ -25,7 +25,7 @@ export function refreshStatusBar(editor: vscode.TextEditor | undefined): void {
   const provider: PuzzleProvider | undefined = siteId ? providers[siteId as keyof typeof providers] : undefined;
   if (!provider) {
     bar.text = '$(question) Puzzle Submitter';
-    bar.tooltip = 'No site configured for this workspace yet — click to submit and set one up.';
+    bar.tooltip = 'No site configured for this workspace yet — click to open the panel and set one up.';
     bar.show();
     return;
   }
@@ -34,13 +34,13 @@ export function refreshStatusBar(editor: vscode.TextEditor | undefined): void {
   const ctx = provider.detect(relativePath);
   if (!ctx) {
     bar.text = `$(circle-slash) ${provider.label}`;
-    bar.tooltip = 'Could not detect a puzzle from the active file — click to submit and pick one manually.';
+    bar.tooltip = 'Could not detect a puzzle from the active file — click to open the panel.';
     bar.show();
     return;
   }
 
   const groupLabel = ctx.group ? `${ctx.group} · ` : '';
   bar.text = `$(cloud-upload) ${provider.label} · ${groupLabel}${ctx.index} (part ${ctx.part})`;
-  bar.tooltip = 'Submit this answer';
+  bar.tooltip = 'Open Puzzle Submitter';
   bar.show();
 }

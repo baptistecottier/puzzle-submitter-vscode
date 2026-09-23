@@ -1,9 +1,12 @@
 import { PuzzleProvider, SiteId } from '../types';
+import { readJsonParts, resolveLocalInputPath, writeJsonParts } from '../core/localInput';
 
 /**
  * Shared shape for sites with no known submission API: no fetchInput/submit, just
- * enough to detect the puzzle and open its page. The submit command falls back to
- * copying the answer to the clipboard for these. See README "Known limitations".
+ * enough to detect the puzzle, open its page, and (via "Set Input", since there's no
+ * fetch API) let the runner work the same way it does for aoc/everybodycodes. The
+ * submit command falls back to copying the answer to the clipboard. See README
+ * "Known limitations".
  */
 function createAssistProvider(config: {
   id: SiteId;
@@ -17,6 +20,7 @@ function createAssistProvider(config: {
     id: config.id,
     label: config.label,
     maxPart: 1,
+    solverInputShape: 'text',
     tokenPrompt: `${config.label} has no known submission API, so no token is used here.`,
     detect(relativeFilePath) {
       const match = config.detectRe.exec(relativeFilePath);
@@ -24,6 +28,16 @@ function createAssistProvider(config: {
       return { group: config.group(match), index: config.index(match), part: 1 };
     },
     puzzleUrl: config.puzzleUrl,
+    localInputPath(ctx) {
+      const segments = ['.puzzle-submitter', config.id, ctx.group, `${ctx.index}.json`].filter(Boolean);
+      return segments.join('/');
+    },
+    readLocalInput(ctx, folder) {
+      return readJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)));
+    },
+    writeLocalInput(ctx, folder, parts) {
+      writeJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)), parts);
+    },
   };
 }
 

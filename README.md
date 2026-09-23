@@ -23,20 +23,35 @@ To hack on the source instead, see Setup below.
    you'll be asked for a session token (see below) — stored in VS Code's encrypted
    `SecretStorage`, never in a file.
 
+## Sidebar panel
+
+Click the Puzzle Submitter icon in the Activity Bar (left edge) for a form instead of
+the command palette: detected site/puzzle/part, input status with Fetch/Set buttons, an
+answer field with "Run solver()"/"Run configured command" buttons to fill it, Submit,
+and a list of what's already been solved in this workspace. The status bar item now
+opens this panel instead of jumping straight into Submit Answer. It only covers the
+common path — if a file can't be auto-detected, it falls back to the same "pick
+manually" prompt as the commands below.
+
 ## Commands
 
 - **Puzzle Submitter: Submit Answer** — detects the puzzle from the active file (or asks).
   When it's auto-detected, you get a quick chance to confirm or change the guessed part
   (the extension only knows what it's seen you submit itself, so it can guess wrong).
-  Then it gets an answer (typed, or from a configured command) and submits it.
+  Then it gets an answer — typed, from a configured command, or (on a `.py` file, any
+  site) by running the file's own `preprocessing()`/`solver()` directly — and submits it.
 - **Puzzle Submitter: Fetch Input** — aoc/everybodycodes only. Downloads (and for
-  Everybody Codes, decrypts) the puzzle input, and never re-downloads if already cached
-  locally.
+  Everybody Codes, decrypts) every currently-unlocked part of the puzzle input in one go,
+  and never re-downloads a part already cached locally.
+- **Puzzle Submitter: Set Input (from Clipboard)** — any site. Saves whatever's on the
+  clipboard as this puzzle's local input, merged into the same cache "Fetch Input" uses.
+  The only way to get local input for codyssi/i18n-puzzles/coding quest (no fetch API),
+  and a manual override/correction for any site.
 - **Puzzle Submitter: Set Token for Current Site** / **Clear Token for Current Site**
 - **Puzzle Submitter: Set Site for Workspace**
 
-A status bar item on the left shows the detected puzzle for the active file and runs
-Submit Answer when clicked.
+A status bar item on the left shows the detected puzzle for the active file and opens
+the sidebar panel when clicked.
 
 ## Settings
 
@@ -45,11 +60,42 @@ Submit Answer when clicked.
 | `puzzleSubmitter.site` | workspace | Which site this workspace submits to. |
 | `puzzleSubmitter.runCommand` | workspace | Optional shell command that prints an answer to stdout, offered as an alternative to typing it. Placeholders: `${year}`, `${day}`, `${part}`, `${file}`. The **last non-empty line of stdout** is used, then shown to you to confirm/edit before it's submitted. |
 | `puzzleSubmitter.contact` | global | Your email or GitHub URL, sent in the `User-Agent` of Advent of Code requests. AoC's documented automation etiquette asks scripts to identify themselves this way, so the site owner can reach you if something misbehaves. |
+| `puzzleSubmitter.pythonPath` | workspace | Interpreter used by "Run solver() from this file". Left unset, this workspace's `.venv/bin/python` is used if present, else `python3` on PATH. |
 
 `puzzleSubmitter.runCommand` is generic — it isn't wired up to this project's own
 `aocp`/`ec.py`/etc. scripts, since those print decorated multi-line/scoreboard output
 rather than a bare answer. Point it at a script that prints just the answer, e.g.
 `python3 ${file}`.
+
+### Local input format & running solver() directly
+
+Every site caches its local input the same way: one JSON file per puzzle,
+`{"1": "part 1 text", "2": "part 2 text", ...}` — via "Fetch Input" (aoc/everybodycodes)
+or "Set Input" (any site, from the clipboard). For aoc this is `day_DD.input` itself
+(same filename `pythonfw/aocp.py` reads/writes — see below); for the other four it's
+`.puzzle-submitter/<site>/<group>/<index>.json`.
+
+"Submit Answer" can call your solution file's `preprocessing(data)`/`solver(data)`
+directly instead of running a separate command, for **any site**, on a `.py` file:
+
+- Reads the cached JSON above — for aoc/everybodycodes, fetching it automatically
+  first (prompting for a token if needed) when it's missing; for the other three,
+  run "Set Input" first.
+- Runs it through `preprocessing()` if the file defines one.
+- Calls `solver(data)`, or `solver(*data)` when `preprocessing()` returned a tuple/list
+  (matching `aocp.py`'s own unpacking rule) — **except Everybody Codes**, whose real
+  `solver()` (see `ec.py`) expects every part at once as one dict argument
+  (`{1: ..., 2: ..., 3: ...}`), not per-part text; the runner passes that shape there.
+- If `solver()` returns a tuple/list, each element is treated as one part's answer
+  (`parts[0]` for part 1, `parts[1]` for part 2, ...); a single return value is used as-is.
+
+#### aocp.py now reads/writes the same JSON format
+
+`pythonfw/aocp.py` (in `advents-of-code`, not this repo) was updated alongside this so
+both tools share `day_DD.input`: `save_input_to_file` now writes JSON, and a new
+`_read_local_input` helper reads it — falling back to the old plain-text format
+unchanged for `.input` files saved before this change, so nothing already downloaded
+breaks.
 
 ## Where session tokens come from
 

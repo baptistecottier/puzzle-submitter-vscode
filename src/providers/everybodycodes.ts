@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
-import { PuzzleContext, PuzzleProvider, SubmitResult } from '../types';
+import { PuzzleContext, PuzzleInputParts, PuzzleProvider, SubmitResult } from '../types';
+import { readJsonParts, resolveLocalInputPath, writeJsonParts } from '../core/localInput';
 
 // Detection + the fetch/decrypt pipeline below are ported from this project's own
 // working scripts/get_cases.py (everybodycodes repo) — that script is the source of
@@ -98,6 +99,7 @@ export const everybodyCodesProvider: PuzzleProvider = {
   id: 'everybodycodes',
   label: 'Everybody Codes',
   maxPart: 3,
+  solverInputShape: 'parts-dict',
   tokenPrompt:
     "Value of the 'everybody-codes' cookie from everybody.codes — log in, open dev tools → Application/Storage → Cookies.",
 
@@ -120,23 +122,39 @@ export const everybodyCodesProvider: PuzzleProvider = {
     return `https://everybody.codes/event/${ctx.group}/quests`;
   },
 
-  inputPath(ctx) {
+  localInputPath(ctx) {
     // Deliberately outside src/everybodycodes/events/**/inputs/inputs_NN.json: that file is
     // ec.py's own multi-case store (keyed by case id, e.g. "41" for the personal input) and
     // merging into it correctly isn't worth the risk of corrupting existing recorded cases.
+    // One file per quest (all parts together), matching ec.py's solver(data: dict) convention.
     const quest = ctx.index.padStart(2, '0');
-    return `.puzzle-submitter/everybodycodes/${ctx.group}/quest_${quest}_part${ctx.part}.input`;
+    return `.puzzle-submitter/everybodycodes/${ctx.group}/quest_${quest}.json`;
+  },
+
+  readLocalInput(ctx, folder) {
+    return readJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)));
+  },
+
+  writeLocalInput(ctx, folder, parts) {
+    writeJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)), parts);
   },
 
   async fetchInput(ctx, token) {
-    const inputs = await fetchEncryptedInputs(ctx, token);
-    const keys = await fetchKeys(ctx, token);
-    const encrypted = inputs[String(ctx.part)];
-    const key = keys[`key${ctx.part}`];
-    if (!encrypted || !key) {
-      throw new Error(`No input/key found for part ${ctx.part} — it may not be unlocked yet.`);
+    // The API hands back every unlocked part's encrypted blob/key in one response each —
+    // decrypt whichever parts are actually available rather than just ctx.part.
+    const [inputs, keys] = await Promise.all([fetchEncryptedInputs(ctx, token), fetchKeys(ctx, token)]);
+    const parts: PuzzleInputParts = {};
+    for (const part of [1, 2, 3]) {
+      const encrypted = inputs[String(part)];
+      const key = keys[`key${part}`];
+      if (encrypted && key) {
+        parts[String(part)] = decrypt(key, encrypted);
+      }
     }
-    return decrypt(key, encrypted);
+    if (Object.keys(parts).length === 0) {
+      throw new Error(`No input/key found for quest ${ctx.index} — it may not be unlocked yet.`);
+    }
+    return parts;
   },
 
   async submit(ctx, token, answer) {

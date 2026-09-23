@@ -1,14 +1,20 @@
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { PuzzleContext, PuzzleProvider } from './types';
 import { providers } from './providers';
 import { resolveSite, promptAndSaveSite } from './core/siteResolver';
+import { promptManualContext } from './core/manualContext';
+import { PuzzleSubmitterViewProvider } from './webview/panelProvider';
 import { requireToken, promptAndSaveToken, clearToken } from './core/auth';
 import { getConfiguredRunCommand, runCommandForAnswer } from './core/runCommand';
+import { resolvePythonInterpreter } from './core/pythonInterpreter';
+import { runPythonSolver } from './core/pythonRunner';
+import { ensureLocalInput } from './core/ensureInput';
 import { markSolved, nextUnsolvedPart } from './core/progress';
 import { getStatusBarItem, refreshStatusBar } from './core/statusBar';
 import { getOutputChannel, log } from './core/output';
+
+let panelProvider: PuzzleSubmitterViewProvider | undefined;
 
 function requireWorkspaceEditor(): { editor: vscode.TextEditor; folder: vscode.WorkspaceFolder } | undefined {
   const editor = vscode.window.activeTextEditor;
@@ -28,28 +34,6 @@ function requireWorkspaceEditor(): { editor: vscode.TextEditor; folder: vscode.W
 function activeOrFirstFolder(): vscode.WorkspaceFolder | undefined {
   const active = vscode.window.activeTextEditor;
   return (active && vscode.workspace.getWorkspaceFolder(active.document.uri)) ?? vscode.workspace.workspaceFolders?.[0];
-}
-
-async function promptManualContext(provider: PuzzleProvider): Promise<PuzzleContext | undefined> {
-  const index = await vscode.window.showInputBox({
-    title: `${provider.label}: puzzle/day/quest number`,
-    ignoreFocusOut: true,
-  });
-  if (!index) return undefined;
-
-  const group = await vscode.window.showInputBox({
-    title: `${provider.label}: year/event/story (leave empty if this site doesn't group by one)`,
-    ignoreFocusOut: true,
-  });
-  if (group === undefined) return undefined;
-
-  const part = await vscode.window.showQuickPick(
-    Array.from({ length: provider.maxPart }, (_, i) => String(i + 1)),
-    { title: 'Which part?' }
-  );
-  if (!part) return undefined;
-
-  return { group: group.trim(), index: index.trim(), part: Number(part) };
 }
 
 /** Lets the user accept (Enter) or override the guessed part — only asked when there's
@@ -86,21 +70,55 @@ async function resolveContext(
   return promptManualContext(provider);
 }
 
+async function runSolverForAnswer(
+  provider: PuzzleProvider,
+  ctx: PuzzleContext,
+  editor: vscode.TextEditor,
+  folder: vscode.WorkspaceFolder,
+  secrets: vscode.SecretStorage
+): Promise<string | undefined> {
+  if (!provider.solverInputShape) return undefined; // guarded by the caller, but keeps TS happy
+  const inputParts = await ensureLocalInput(provider, ctx, folder, secrets);
+  if (!inputParts?.[String(ctx.part)]) {
+    const suggestion = provider.fetchInput ? "auto-fetch didn't get this part" : 'run "Set Input" first';
+    vscode.window.showErrorMessage(
+      `Puzzle Submitter: no local input for this puzzle at ${vscode.workspace.asRelativePath(
+        path.join(folder.uri.fsPath, provider.localInputPath(ctx))
+      )} — ${suggestion}.`
+    );
+    return undefined;
+  }
+  const pythonPath = resolvePythonInterpreter(folder);
+  const { parts } = await runPythonSolver(
+    pythonPath,
+    editor.document.uri.fsPath,
+    inputParts,
+    provider.solverInputShape,
+    ctx.part,
+    folder.uri.fsPath
+  );
+  return parts[ctx.part - 1] ?? parts[0];
+}
+
 async function resolveAnswer(
   provider: PuzzleProvider,
   ctx: PuzzleContext,
   editor: vscode.TextEditor,
-  folder: vscode.WorkspaceFolder
+  folder: vscode.WorkspaceFolder,
+  secrets: vscode.SecretStorage
 ): Promise<string | undefined> {
   const label = `Answer — ${provider.label}${ctx.group ? ' ' + ctx.group : ''} ${ctx.index} part ${ctx.part}`;
   const template = getConfiguredRunCommand(folder);
-  if (!template) {
+  const canRunSolver = provider.solverInputShape && editor.document.uri.fsPath.endsWith('.py');
+
+  if (!template && !canRunSolver) {
     return vscode.window.showInputBox({ title: label, ignoreFocusOut: true });
   }
 
   const choice = await vscode.window.showQuickPick(
     [
-      { label: '$(play) Run configured command', detail: template, id: 'run' as const },
+      ...(canRunSolver ? [{ label: '$(play) Run solver() from this file', id: 'solver' as const }] : []),
+      ...(template ? [{ label: '$(terminal) Run configured command', detail: template, id: 'run' as const }] : []),
       { label: '$(edit) Type the answer', id: 'manual' as const },
     ],
     { title: 'How do you want to provide the answer?' }
@@ -111,8 +129,12 @@ async function resolveAnswer(
   }
 
   try {
-    const output = await runCommandForAnswer(template, ctx, editor.document.uri.fsPath, folder.uri.fsPath);
-    return vscode.window.showInputBox({ title: `${label} (from command output — edit if needed)`, value: output, ignoreFocusOut: true });
+    const output =
+      choice.id === 'solver'
+        ? await runSolverForAnswer(provider, ctx, editor, folder, secrets)
+        : await runCommandForAnswer(template, ctx, editor.document.uri.fsPath, folder.uri.fsPath);
+    if (output === undefined) return undefined;
+    return vscode.window.showInputBox({ title: `${label} (from ${choice.id === 'solver' ? 'solver()' : 'command output'} — edit if needed)`, value: output, ignoreFocusOut: true });
   } catch (error) {
     vscode.window.showErrorMessage(`Puzzle Submitter: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
@@ -131,7 +153,7 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
   const ctx = await resolveContext(provider, editor, context.workspaceState);
   if (!ctx) return;
 
-  const answer = await resolveAnswer(provider, ctx, editor, folder);
+  const answer = await resolveAnswer(provider, ctx, editor, folder, context.secrets);
   if (!answer) return;
 
   if (!provider.submit) {
@@ -177,6 +199,7 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
   );
 
   refreshStatusBar(editor);
+  void panelProvider?.refresh();
 }
 
 async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void> {
@@ -188,16 +211,17 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
   if (!siteId) return;
   const provider = providers[siteId];
 
-  if (!provider.fetchInput || !provider.inputPath) {
-    vscode.window.showInformationMessage(`${provider.label} has no known input-fetching API.`);
+  if (!provider.fetchInput) {
+    vscode.window.showInformationMessage(`${provider.label} has no known input-fetching API — use "Set Input" instead.`);
     return;
   }
 
   const ctx = await resolveContext(provider, editor, context.workspaceState);
   if (!ctx) return;
 
-  const targetPath = path.join(folder.uri.fsPath, provider.inputPath(ctx));
-  if (fs.existsSync(targetPath)) {
+  const targetPath = path.join(folder.uri.fsPath, provider.localInputPath(ctx));
+  const existing = provider.readLocalInput(ctx, folder);
+  if (existing && existing[String(ctx.part)]) {
     vscode.window.showInformationMessage(`Input already cached at ${vscode.workspace.asRelativePath(targetPath)} — not re-downloading.`);
     await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(targetPath));
     return;
@@ -211,11 +235,11 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
     { location: vscode.ProgressLocation.Notification, title: `Fetching input from ${provider.label}…` },
     async () => {
       try {
-        const input = await provider.fetchInput!(ctx, token, contact);
-        await fs.promises.mkdir(path.dirname(targetPath), { recursive: true });
-        await fs.promises.writeFile(targetPath, input, 'utf8');
+        const parts = await provider.fetchInput!(ctx, token, contact);
+        provider.writeLocalInput(ctx, folder, parts);
         log(`Saved input to ${targetPath}`);
         await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(targetPath));
+        void panelProvider?.refresh();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log(`Error: ${message}`);
@@ -223,6 +247,38 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
       }
     }
   );
+}
+
+async function setInputCommand(context: vscode.ExtensionContext): Promise<void> {
+  const target = requireWorkspaceEditor();
+  if (!target) return;
+  const { editor, folder } = target;
+
+  const siteId = await resolveSite(folder);
+  if (!siteId) return;
+  const provider = providers[siteId];
+
+  const ctx = await resolveContext(provider, editor, context.workspaceState);
+  if (!ctx) return;
+
+  const clipboard = await vscode.env.clipboard.readText();
+  if (!clipboard.trim()) {
+    vscode.window.showErrorMessage('Puzzle Submitter: clipboard is empty — copy the puzzle input first.');
+    return;
+  }
+
+  const confirmed = await vscode.window.showInformationMessage(
+    `Save ${clipboard.length} characters from the clipboard as the input for ${provider.label}${ctx.group ? ' ' + ctx.group : ''} ${ctx.index} part ${ctx.part}?`,
+    { modal: true },
+    'Save'
+  );
+  if (confirmed !== 'Save') return;
+
+  provider.writeLocalInput(ctx, folder, { [String(ctx.part)]: clipboard.replace(/\n$/, '') });
+  const targetPath = path.join(folder.uri.fsPath, provider.localInputPath(ctx));
+  log(`Saved input to ${targetPath} (from clipboard)`);
+  vscode.window.showInformationMessage(`Puzzle Submitter: input saved to ${vscode.workspace.asRelativePath(targetPath)}.`);
+  void panelProvider?.refresh();
 }
 
 async function setTokenCommand(context: vscode.ExtensionContext): Promise<void> {
@@ -236,6 +292,7 @@ async function setTokenCommand(context: vscode.ExtensionContext): Promise<void> 
   const token = await promptAndSaveToken(context.secrets, provider);
   if (token) {
     vscode.window.showInformationMessage(`Puzzle Submitter: token saved for ${provider.label}.`);
+    void panelProvider?.refresh();
   }
 }
 
@@ -244,25 +301,38 @@ async function clearTokenCommand(context: vscode.ExtensionContext): Promise<void
   if (!siteId) return;
   const provider = providers[siteId];
   await clearToken(context.secrets, provider);
+  void panelProvider?.refresh();
   vscode.window.showInformationMessage(`Puzzle Submitter: token cleared for ${provider.label}.`);
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  const view = new PuzzleSubmitterViewProvider(context);
+  panelProvider = view;
+
   context.subscriptions.push(
     vscode.commands.registerCommand('puzzleSubmitter.submitAnswer', () => submitAnswerCommand(context)),
     vscode.commands.registerCommand('puzzleSubmitter.fetchInput', () => fetchInputCommand(context)),
+    vscode.commands.registerCommand('puzzleSubmitter.setInput', () => setInputCommand(context)),
     vscode.commands.registerCommand('puzzleSubmitter.setToken', () => setTokenCommand(context)),
     vscode.commands.registerCommand('puzzleSubmitter.clearToken', () => clearTokenCommand(context)),
     vscode.commands.registerCommand('puzzleSubmitter.setSite', async () => {
       const site = await promptAndSaveSite(activeOrFirstFolder());
-      if (site) refreshStatusBar(vscode.window.activeTextEditor);
+      if (site) {
+        refreshStatusBar(vscode.window.activeTextEditor);
+        void view.refresh();
+      }
     }),
+    vscode.window.registerWebviewViewProvider('puzzleSubmitter.panel', view),
     getOutputChannel(),
     getStatusBarItem(),
-    vscode.window.onDidChangeActiveTextEditor(refreshStatusBar),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      refreshStatusBar(editor);
+      void view.refresh();
+    }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('puzzleSubmitter.site')) {
         refreshStatusBar(vscode.window.activeTextEditor);
+        void view.refresh();
       }
     })
   );

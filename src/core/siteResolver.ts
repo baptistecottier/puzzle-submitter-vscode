@@ -8,13 +8,17 @@ function isSiteId(value: unknown): value is SiteId {
   return typeof value === 'string' && value in providers;
 }
 
+/** Reads puzzleSubmitter.site without prompting — undefined if unset. For UI that
+ * refreshes passively (the sidebar panel) and shouldn't pop a QuickPick on its own. */
+export function peekSite(scope: vscode.ConfigurationScope | undefined): SiteId | undefined {
+  const configured = vscode.workspace.getConfiguration(CONFIG_SECTION, scope).get<string>('site');
+  return isSiteId(configured) ? configured : undefined;
+}
+
 /** Reads puzzleSubmitter.site for the given workspace folder, prompting (and persisting) if unset. */
 export async function resolveSite(scope: vscode.ConfigurationScope | undefined): Promise<SiteId | undefined> {
-  const config = vscode.workspace.getConfiguration(CONFIG_SECTION, scope);
-  const configured = config.get<string>('site');
-  if (isSiteId(configured)) {
-    return configured;
-  }
+  const existing = peekSite(scope);
+  if (existing) return existing;
   return promptAndSaveSite(scope);
 }
 

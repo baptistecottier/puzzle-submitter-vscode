@@ -2,7 +2,7 @@
   "name": "puzzle-submitter",
   "displayName": "Puzzle Submitter",
   "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code.",
-  "version": "0.1.1",
+  "version": "0.4.3",
   "publisher": "baptistecottier",
   "license": "MIT",
   "icon": "icon.png",
@@ -42,6 +42,10 @@
         "title": "Puzzle Submitter: Fetch Input"
       },
       {
+        "command": "puzzleSubmitter.setInput",
+        "title": "Puzzle Submitter: Set Input (from Clipboard)"
+      },
+      {
         "command": "puzzleSubmitter.setToken",
         "title": "Puzzle Submitter: Set Token for Current Site"
       },
@@ -54,6 +58,24 @@
         "title": "Puzzle Submitter: Set Site for Workspace"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "puzzleSubmitter",
+          "title": "Puzzle Submitter",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "puzzleSubmitter": [
+        {
+          "id": "puzzleSubmitter.panel",
+          "name": "Puzzle Submitter",
+          "type": "webview"
+        }
+      ]
+    },
     "configuration": {
       "title": "Puzzle Submitter",
       "properties": {
@@ -87,6 +109,12 @@
           "default": "",
           "scope": "application",
           "description": "Your email or GitHub profile URL, sent in the User-Agent header of requests to puzzle sites that ask automated tools to identify themselves (e.g. Advent of Code)."
+        },
+        "puzzleSubmitter.pythonPath": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "Python interpreter used by \"Run solver() from this file\". Left unset, this workspace's .venv/bin/python is used if present, otherwise python3 on PATH."
         }
       }
     }

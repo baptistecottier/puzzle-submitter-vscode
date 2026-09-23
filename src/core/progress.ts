@@ -30,3 +30,26 @@ export function nextUnsolvedPart(state: vscode.Memento, provider: PuzzleProvider
   }
   return provider.maxPart;
 }
+
+export interface SolvedPuzzle {
+  group: string;
+  index: string;
+  parts: number[];
+}
+
+/** Every puzzle this workspace has marked at least one solved part for, for this provider. */
+export function listSolvedPuzzles(state: vscode.Memento, provider: PuzzleProvider): SolvedPuzzle[] {
+  const prefix = `puzzleSubmitter.progress.${provider.id}.`;
+  const results: SolvedPuzzle[] = [];
+  for (const key of state.keys()) {
+    if (!key.startsWith(prefix)) continue;
+    const remainder = key.slice(prefix.length);
+    const dotIndex = remainder.indexOf('.');
+    if (dotIndex === -1) continue;
+    const parts = state.get<number[]>(key, []);
+    if (parts.length === 0) continue;
+    results.push({ group: remainder.slice(0, dotIndex), index: remainder.slice(dotIndex + 1), parts });
+  }
+  results.sort((a, b) => Number(a.index) - Number(b.index));
+  return results;
+}
