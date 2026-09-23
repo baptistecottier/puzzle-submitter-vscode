@@ -15,6 +15,8 @@ function createAssistProvider(config: {
   group: (match: RegExpExecArray) => string;
   index: (match: RegExpExecArray) => string;
   puzzleUrl: PuzzleProvider['puzzleUrl'];
+  /** Omitted for sites with no real grouped-event structure (i18n-puzzles) — "New Event" won't offer them. */
+  scaffoldPath?: PuzzleProvider['scaffoldPath'];
 }): PuzzleProvider {
   return {
     id: config.id,
@@ -29,6 +31,7 @@ function createAssistProvider(config: {
       return { group: config.group(match), index: config.index(match), part: 1 };
     },
     puzzleUrl: config.puzzleUrl,
+    scaffoldPath: config.scaffoldPath,
   };
 }
 
@@ -42,6 +45,10 @@ export const codyssiProvider = createAssistProvider({
   // No confirmed per-day URL — links to the challenges list. Tell Claude a real day
   // URL (e.g. from your browser's address bar) and this can be sharpened.
   puzzleUrl: () => 'https://www.codyssi.com/challenges_page',
+  scaffoldPath: (ctx) => {
+    const day = ctx.index.padStart(2, '0');
+    return `events/year_${ctx.group}/day_${day}/day_${day}.py`;
+  },
 });
 
 export const i18nPuzzlesProvider = createAssistProvider({
@@ -67,4 +74,10 @@ export const codingQuestProvider = createAssistProvider({
   // codingquest.io problem pages use a flat global number unrelated to year/day, which
   // isn't derivable from the local folder layout — links to the homepage instead.
   puzzleUrl: () => 'https://codingquest.io',
+  // group already includes the challenge/practice prefix (e.g. "challenge_2024"), so
+  // "New Event"'s name prompt for this site asks for exactly that combined form.
+  scaffoldPath: (ctx) => {
+    const day = ctx.index.padStart(2, '0');
+    return `events/${ctx.group}/day_${day}/day_${day}.py`;
+  },
 });

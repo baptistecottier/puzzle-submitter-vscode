@@ -90,6 +90,11 @@ export const aocProvider: PuzzleProvider = {
     return `https://adventofcode.com/${ctx.group}/day/${ctx.index}`;
   },
 
+  scaffoldPath(ctx) {
+    const day = ctx.index.padStart(2, '0');
+    return `events/year_${ctx.group}/day_${day}/day_${day}.py`;
+  },
+
   async fetchInput(ctx, token, contact) {
     const response = await fetchAoc(`https://adventofcode.com/${ctx.group}/day/${ctx.index}/input`, token, contact);
     const text = (await response.text()).replace(/\n$/, '');

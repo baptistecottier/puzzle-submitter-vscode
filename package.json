@@ -1,8 +1,8 @@
 {
   "name": "puzzle-submitter",
   "displayName": "Puzzle Submitter",
-  "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code.",
-  "version": "0.2.0",
+  "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code, with an optional Python solver() runner to fill in answers automatically.",
+  "version": "0.3.0",
   "publisher": "baptistecottier",
   "license": "MIT",
   "icon": "icon.png",
@@ -28,7 +28,8 @@
     "codyssi",
     "i18n-puzzles",
     "coding quest",
-    "puzzle"
+    "puzzle",
+    "python"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -66,6 +67,11 @@
         "command": "puzzleSubmitter.tree.sync",
         "title": "Puzzle Submitter: Sync with Site (Fetch Input + Reference Answers + Run All)",
         "icon": "$(sync)"
+      },
+      {
+        "command": "puzzleSubmitter.tree.newEvent",
+        "title": "Puzzle Submitter: New Event",
+        "icon": "$(new-folder)"
       },
       {
         "command": "puzzleSubmitter.tree.benchmarkQuest",
@@ -113,6 +119,11 @@
     },
     "menus": {
       "view/title": [
+        {
+          "command": "puzzleSubmitter.tree.newEvent",
+          "when": "view == puzzleSubmitter.tree",
+          "group": "navigation"
+        },
         {
           "command": "puzzleSubmitter.tree.sync",
           "when": "view == puzzleSubmitter.tree",

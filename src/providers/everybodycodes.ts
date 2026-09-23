@@ -147,6 +147,17 @@ export const everybodyCodesProvider: PuzzleProvider = {
     return `https://everybody.codes/event/${ctx.group}/quests`;
   },
 
+  // Not offered for GridOS — see supportsRunner above, there's no per-quest solver() to
+  // scaffold a stub for. Reuses groupLabel's same 4-digit-year heuristic to pick between
+  // the two real layouts.
+  scaffoldPath(ctx) {
+    const quest = ctx.index.padStart(2, '0');
+    if (/^\d{4}$/.test(ctx.group)) {
+      return `events/year_${ctx.group}/solutions/quest_${quest}.py`;
+    }
+    return `stories/story_${ctx.group.padStart(2, '0')}/solutions/quest_${quest}.py`;
+  },
+
   async fetchInput(ctx, token) {
     // The API hands back every unlocked part's encrypted blob/key in one response each —
     // decrypt whichever parts are actually available rather than just ctx.part.

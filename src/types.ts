@@ -65,4 +65,8 @@ export interface PuzzleProvider {
    * detects (e.g. Everybody Codes' GridOS, which has no per-quest solver() at all).
    * Defaults to true (whenever solverInputShape is set) when a provider omits this. */
   supportsRunner?(ctx: PuzzleContext): boolean;
+  /** Canonical workspace-relative .py path for a puzzle — the inverse of detect(), used
+   * by the tree's "New Event" scaffolding action. Only implemented by sites with a real
+   * grouped-event structure (not i18n-puzzles, which is flat and has no such concept). */
+  scaffoldPath?(ctx: PuzzleContext): string;
 }

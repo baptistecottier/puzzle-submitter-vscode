@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { PuzzleContext, PuzzleProvider } from '../types';
 import { providers } from '../providers';
@@ -7,6 +9,7 @@ import { maxPartFor } from '../core/puzzleParts';
 import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from '../core/pythonInterpreter';
 import { ensureLocalInput } from '../core/ensureInput';
 import { benchmarkPart, PartBenchmark } from '../core/benchmark';
+import { inferPathPrefix, planNewEvent, scaffoldFileContent } from '../core/puzzleScaffold';
 import { requireToken } from '../core/auth';
 import { getRecordedAnswer, markSolved } from '../core/progress';
 import { guardSubmit } from '../core/submitGuard';
@@ -438,6 +441,111 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         `Sync complete: ${this.describeTally(totals)} across ${jobs.length} ${provider.itemNoun.toLowerCase()}(s).`
       );
     }
+  }
+
+  /**
+   * Scaffolds a brand-new event: prompts for a name (the group — e.g. a year), what to
+   * call each sub-puzzle, and how many, then creates a preprocessing()/solver() stub for
+   * each — matching the active site's real convention (see core/puzzleScaffold.ts) so
+   * the tree picks them up on the next refresh. Never overwrites a file that already
+   * exists; existing indexes are just skipped, so this also works to fill in the rest of
+   * a partially-scaffolded event.
+   */
+  async newEvent(): Promise<void> {
+    if (!this.provider || !this.folder) return;
+    const provider = this.provider;
+    const folder = this.folder;
+
+    if (!provider.scaffoldPath) {
+      vscode.window.showInformationMessage(
+        `${provider.label} has no grouped-event structure to scaffold — create files by hand.`
+      );
+      return;
+    }
+
+    const name = await vscode.window.showInputBox({
+      title: `${provider.label}: name for the new event`,
+      prompt:
+        provider.id === 'codingquest'
+          ? 'Include the track, e.g. "challenge_2026" or "practice_2026"'
+          : 'e.g. a year like 2026',
+      ignoreFocusOut: true,
+    });
+    if (!name?.trim()) return;
+    const group = name.trim();
+
+    const kindPick = await vscode.window.showQuickPick(
+      [
+        { label: provider.itemNoun, description: `matches ${provider.label}`, noun: provider.itemNoun as string | undefined },
+        { label: 'Other…', description: "custom name — won't be picked up by the tree automatically", noun: undefined },
+      ],
+      { title: 'What to call each sub-puzzle?' }
+    );
+    if (!kindPick) return;
+
+    let noun = kindPick.noun;
+    if (!noun) {
+      const custom = await vscode.window.showInputBox({ title: 'Custom name for each sub-puzzle', ignoreFocusOut: true });
+      if (!custom?.trim()) return;
+      noun = custom.trim();
+    }
+
+    const countText = await vscode.window.showInputBox({
+      title: `How many ${noun.toLowerCase()}(s)?`,
+      value: '25',
+      validateInput: (v) => {
+        const n = Number(v);
+        return Number.isInteger(n) && n >= 1 && n <= 100 ? undefined : 'Enter a whole number from 1 to 100.';
+      },
+      ignoreFocusOut: true,
+    });
+    if (!countText) return;
+    const count = Number(countText);
+
+    if (noun !== provider.itemNoun) {
+      const proceed = await vscode.window.showWarningMessage(
+        `"${noun}" doesn't match ${provider.label}'s own convention (${provider.itemNoun}) — these files likely won't show up in the Puzzles tree. Create them anyway?`,
+        { modal: true },
+        'Create Anyway'
+      );
+      if (proceed !== 'Create Anyway') return;
+    }
+
+    // Learn the real on-disk prefix (e.g. a repo nesting everything under
+    // "src/everybodycodes/") from any quest already known for this site in this
+    // workspace, instead of assuming the site's canonical path sits at the workspace
+    // root — see core/puzzleScaffold.ts's inferPathPrefix.
+    let prefix = '';
+    for (const [existingGroup, perGroup] of this.quests) {
+      const first = [...perGroup.entries()][0];
+      if (!first) continue;
+      const [existingIndex, entry] = first;
+      const existingCtx: PuzzleContext = { group: existingGroup, index: existingIndex, part: 1 };
+      const relative = vscode.workspace.asRelativePath(entry.filePath, false);
+      prefix = inferPathPrefix(provider, existingCtx, relative);
+      break;
+    }
+
+    const plan = planNewEvent(provider, group, noun, count, prefix);
+
+    let created = 0;
+    let skipped = 0;
+    for (const { relativePath, ctx } of plan) {
+      const absolutePath = path.join(folder.uri.fsPath, relativePath);
+      if (fs.existsSync(absolutePath)) {
+        skipped++;
+        continue;
+      }
+      fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+      fs.writeFileSync(absolutePath, scaffoldFileContent(provider, ctx), 'utf8');
+      created++;
+    }
+
+    await this.refresh();
+    vscode.window.showInformationMessage(
+      `${this.groupLabel(group)}: created ${created} ${noun.toLowerCase()}(s)` +
+        (skipped > 0 ? `, skipped ${skipped} (already existed).` : '.')
+    );
   }
 
   private async benchmarkOneQuest(group: string, index: string, filePath: string): Promise<Tally> {

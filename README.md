@@ -1,7 +1,9 @@
 # Puzzle Submitter
 
 Submit puzzle answers to Advent of Code, Everybody Codes, Codyssi, i18n-puzzles and
-Coding Quest without leaving VS Code.
+Coding Quest without leaving VS Code — works with a solution in any language (type or
+paste the answer, or point `puzzleSubmitter.runCommand` at any script that prints one),
+with an optional built-in runner for Python solutions specifically (see below).
 
 <!-- TODO: screenshot of the sidebar panel (media/screenshot-panel.png), see the mockup
      shared in chat for a preview of the exact layout/theme this would show. -->
@@ -20,9 +22,13 @@ Coding Quest without leaving VS Code.
 - **Fetches and caches input locally** for the two sites with an API (decrypting
   Everybody Codes' input automatically); a manual "Set Input" from the clipboard covers
   the rest, or overrides any of them.
-- **Runs your solution directly** — `preprocessing()`/`solver()` from the open `.py`
+- **Runs a Python solution directly** — `preprocessing()`/`solver()` from the open `.py`
   file, no wrapper script needed, matching the calling convention each site's own
-  reference tooling (`aocp.py`, `ec.py`, ...) actually uses.
+  reference tooling (`aocp.py`, `ec.py`, ...) actually uses. This is the one Python-specific
+  piece of the extension; everything else (detection, fetching input, submitting) is
+  language-agnostic — solving in something other than Python just means typing the
+  answer in, or wiring up `puzzleSubmitter.runCommand` to run your own solution however
+  it needs to run.
 - **Checks against a recorded answer before submitting**, everywhere you can submit
   (command, panel, tree): if what you're about to submit already matches an
   answer this extension has confirmed correct, it's not sent again — the site would just
@@ -70,6 +76,15 @@ group found in the workspace, expanding to quests, expanding to parts — built 
 scanning the workspace for `.py` files the current site's provider recognizes (there's
 no "list all my puzzles" API to build this from instead).
 
+- **New Event** (toolbar button at the top of the tree) — scaffolds a brand-new event:
+  asks for a name (e.g. a year), what to call each sub-puzzle, and how many, then creates
+  a `preprocessing()`/`solver()` stub for each, matching the active site's real folder
+  convention (including any repo-specific prefix, inferred from an existing quest already
+  in the workspace) so they show up in the tree right away. Picking a name other than the
+  site's own (e.g. typing something custom instead of the suggested "Day"/"Quest") warns
+  you first — those files won't be auto-detected. Never overwrites a file that already
+  exists, so it also works to fill in the rest of a partially-created event. Not offered
+  for i18n-puzzles (flat numbering, no event to name).
 - **Sync with Site** (toolbar button at the top of the tree) — the one-click version of
   everything below, across *every* event in the workspace at once, not just one: fetches
   any missing input, fetches any missing reference answers, then benchmarks — skipping

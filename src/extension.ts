@@ -341,6 +341,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('puzzleSubmitter.tree.refresh', () => tree.refresh()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.sync', () => tree.syncWithSite()),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.newEvent', () => tree.newEvent()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.benchmarkQuest', (node: TreeNode) => {
       if (node?.kind === 'quest') return tree.benchmarkQuest(node);
       return undefined;
