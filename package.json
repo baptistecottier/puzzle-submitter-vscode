@@ -6,6 +6,14 @@
   "publisher": "baptistecottier",
   "license": "MIT",
   "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/baptistecottier/puzzle-submitter-vscode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/baptistecottier/puzzle-submitter-vscode/issues"
+  },
+  "homepage": "https://github.com/baptistecottier/puzzle-submitter-vscode#readme",
   "engines": {
     "vscode": "^1.85.0",
     "node": ">=18"
