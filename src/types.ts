@@ -32,6 +32,11 @@ export interface PuzzleProvider {
   tokenPrompt: string;
   /** Highest part number this site's puzzles have (used for the "next unsolved part" default). */
   maxPart: number;
+  /** What to call one quest/day/puzzle in the tree view, e.g. "Day" -> "Day 5". */
+  itemNoun: string;
+  /** Human label for a ctx.group value in the tree view, e.g. "gridos-1" -> "GridOS 1".
+   * Defaults to the raw group (or "(ungrouped)" if empty) when a provider omits this. */
+  groupLabel?(group: string): string;
   /** Infer year/day/quest + a default part from a file path relative to the workspace root. */
   detect(relativeFilePath: string): PuzzleContext | undefined;
   /** Link to the puzzle's page on the site, for a human to open. */
@@ -43,4 +48,8 @@ export interface PuzzleProvider {
   /** Set on every site: how its solver(data) wants PuzzleInputParts shaped. Presence of
    * this field is what enables the "Run solver() from this file" runner. */
   solverInputShape?: SolverInputShape;
+  /** Only needed when solverInputShape doesn't uniformly apply to everything a provider
+   * detects (e.g. Everybody Codes' GridOS, which has no per-quest solver() at all).
+   * Defaults to true (whenever solverInputShape is set) when a provider omits this. */
+  supportsRunner?(ctx: PuzzleContext): boolean;
 }

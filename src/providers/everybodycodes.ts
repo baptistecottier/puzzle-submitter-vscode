@@ -6,6 +6,9 @@ import { PuzzleContext, PuzzleInputParts, PuzzleProvider, SubmitResult } from '.
 // truth for these endpoints, not guesswork.
 const EVENTS_RE = /events\/year_(\d{4})\/solutions\/quest_(\d{2})/;
 const STORIES_RE = /stories\/story_(\d{2})\/solutions\/quest_(\d{2})/;
+// GridOS has no per-quest solver() — quest_N/ holds .rules/test-case data for a shared
+// rule engine (gridOS.py), not solution code — see the "supportsRunner" check below.
+const GRIDOS_RE = /gridos\/gridos_(\d+)\/quest_(\d+)/;
 
 function cookieHeader(token: string): string {
   return `everybody-codes=${token}`;
@@ -98,9 +101,17 @@ export const everybodyCodesProvider: PuzzleProvider = {
   id: 'everybodycodes',
   label: 'Everybody Codes',
   maxPart: 3,
+  itemNoun: 'Quest',
   solverInputShape: 'parts-dict',
   tokenPrompt:
     "Value of the 'everybody-codes' cookie from everybody.codes — log in, open dev tools → Application/Storage → Cookies.",
+
+  groupLabel(group) {
+    if (group.startsWith('gridos-')) return `GridOS ${group.slice('gridos-'.length)}`;
+    // Yearly events use a plain 4-digit year; stories use a plain, small story number —
+    // never confirmed to collide in practice (AoC/EC years are always 4 digits).
+    return /^\d{4}$/.test(group) ? group : `Story ${group}`;
+  },
 
   detect(relativeFilePath) {
     const event = EVENTS_RE.exec(relativeFilePath);
@@ -113,10 +124,25 @@ export const everybodyCodesProvider: PuzzleProvider = {
       // project's existing tooling, unlike yearly events. Verify against a real token.
       return { group: String(Number(story[1])), index: String(Number(story[2])), part: 1 };
     }
+    const gridos = GRIDOS_RE.exec(relativeFilePath);
+    if (gridos) {
+      // Browsable (tree, status bar, ...) but not runnable/submittable — see
+      // supportsRunner below and the README: GridOS has no per-quest solver() and no
+      // confirmed submission endpoint, unlike yearly events/stories.
+      return { group: `gridos-${Number(gridos[1])}`, index: String(Number(gridos[2])), part: 1 };
+    }
     return undefined;
   },
 
+  supportsRunner(ctx) {
+    return !ctx.group.startsWith('gridos-');
+  },
+
   puzzleUrl(ctx) {
+    if (ctx.group.startsWith('gridos-')) {
+      // No confirmed GridOS URL of any kind — the homepage is the only link I'm sure is real.
+      return 'https://everybody.codes/';
+    }
     // Confirmed base pattern only (event's quest list) — not deep-linked to a specific quest.
     return `https://everybody.codes/event/${ctx.group}/quests`;
   },

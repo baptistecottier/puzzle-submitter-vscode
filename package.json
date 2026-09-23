@@ -2,7 +2,7 @@
   "name": "puzzle-submitter",
   "displayName": "Puzzle Submitter",
   "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code.",
-  "version": "0.5.1",
+  "version": "0.6.1",
   "publisher": "baptistecottier",
   "license": "MIT",
   "icon": "icon.png",
@@ -56,6 +56,26 @@
       {
         "command": "puzzleSubmitter.setSite",
         "title": "Puzzle Submitter: Set Site for Workspace"
+      },
+      {
+        "command": "puzzleSubmitter.tree.refresh",
+        "title": "Puzzle Submitter: Refresh Tree",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "puzzleSubmitter.tree.benchmarkQuest",
+        "title": "Run All Parts (Benchmark)",
+        "icon": "$(play)"
+      },
+      {
+        "command": "puzzleSubmitter.tree.benchmarkEvent",
+        "title": "Run All Quests (Benchmark)",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "puzzleSubmitter.tree.submitPart",
+        "title": "Submit",
+        "icon": "$(cloud-upload)"
       }
     ],
     "viewsContainers": {
@@ -73,6 +93,37 @@
           "id": "puzzleSubmitter.panel",
           "name": "Puzzle Submitter",
           "type": "webview"
+        },
+        {
+          "id": "puzzleSubmitter.tree",
+          "name": "Puzzles",
+          "type": "tree"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "puzzleSubmitter.tree.refresh",
+          "when": "view == puzzleSubmitter.tree",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "puzzleSubmitter.tree.benchmarkEvent",
+          "when": "view == puzzleSubmitter.tree && viewItem == puzzleSubmitter.event",
+          "group": "inline"
+        },
+        {
+          "command": "puzzleSubmitter.tree.benchmarkQuest",
+          "when": "view == puzzleSubmitter.tree && viewItem == puzzleSubmitter.quest",
+          "group": "inline"
+        },
+        {
+          "command": "puzzleSubmitter.tree.submitPart",
+          "when": "view == puzzleSubmitter.tree && viewItem == puzzleSubmitter.part",
+          "group": "inline"
         }
       ]
     },

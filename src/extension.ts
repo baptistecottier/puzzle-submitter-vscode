@@ -4,10 +4,11 @@ import { providers } from './providers';
 import { resolveSite, promptAndSaveSite } from './core/siteResolver';
 import { promptManualContext } from './core/manualContext';
 import { PuzzleSubmitterViewProvider } from './webview/panelProvider';
+import { PuzzleTreeProvider, TreeNode } from './tree/puzzleTreeProvider';
 import { requireToken, promptAndSaveToken, clearToken } from './core/auth';
 import { getConfiguredRunCommand, runCommandForAnswer } from './core/runCommand';
 import { resolvePythonInterpreter } from './core/pythonInterpreter';
-import { runPythonSolver } from './core/pythonRunner';
+import { canRunSolver, runPythonSolver } from './core/pythonRunner';
 import { ensureLocalInput } from './core/ensureInput';
 import { readLocalInput, siteInputPath, writeLocalInput } from './core/localInput';
 import { markSolved, nextUnsolvedPart } from './core/progress';
@@ -15,6 +16,7 @@ import { getStatusBarItem, refreshStatusBar } from './core/statusBar';
 import { getOutputChannel, log } from './core/output';
 
 let panelProvider: PuzzleSubmitterViewProvider | undefined;
+let treeProvider: PuzzleTreeProvider | undefined;
 
 function requireWorkspaceEditor(): { editor: vscode.TextEditor; folder: vscode.WorkspaceFolder } | undefined {
   const editor = vscode.window.activeTextEditor;
@@ -107,15 +109,15 @@ async function resolveAnswer(
 ): Promise<string | undefined> {
   const label = `Answer — ${provider.label}${ctx.group ? ' ' + ctx.group : ''} ${ctx.index} part ${ctx.part}`;
   const template = getConfiguredRunCommand(folder);
-  const canRunSolver = provider.solverInputShape && editor.document.uri.fsPath.endsWith('.py');
+  const solverEligible = canRunSolver(provider, ctx, editor.document.uri.fsPath);
 
-  if (!template && !canRunSolver) {
+  if (!template && !solverEligible) {
     return vscode.window.showInputBox({ title: label, ignoreFocusOut: true });
   }
 
   const choice = await vscode.window.showQuickPick(
     [
-      ...(canRunSolver ? [{ label: '$(play) Run solver() from this file', id: 'solver' as const }] : []),
+      ...(solverEligible ? [{ label: '$(play) Run solver() from this file', id: 'solver' as const }] : []),
       ...(template ? [{ label: '$(terminal) Run configured command', detail: template, id: 'run' as const }] : []),
       { label: '$(edit) Type the answer', id: 'manual' as const },
     ],
@@ -177,7 +179,7 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
         log(`Result: ${result.status} — ${result.message}`);
 
         if (result.status === 'correct' || result.status === 'already-solved') {
-          await markSolved(context.workspaceState, provider, ctx, ctx.part);
+          await markSolved(context.workspaceState, provider, ctx, ctx.part, result.status === 'correct' ? answer : undefined);
         }
 
         const icon = { correct: '✅', 'already-solved': 'ℹ️', incorrect: '❌', 'rate-limited': '⏳', unknown: '⚠️' }[
@@ -198,6 +200,7 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
 
   refreshStatusBar(editor);
   void panelProvider?.refresh();
+  void treeProvider?.refresh();
 }
 
 async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void> {
@@ -236,6 +239,7 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
         log(`Saved input to ${siteInputPath(provider.id)}`);
         vscode.window.showInformationMessage(`Puzzle Submitter: input saved to ${siteInputPath(provider.id)}.`);
         void panelProvider?.refresh();
+        void treeProvider?.refresh();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log(`Error: ${message}`);
@@ -274,6 +278,7 @@ async function setInputCommand(context: vscode.ExtensionContext): Promise<void> 
   log(`Saved input to ${siteInputPath(provider.id)} (from clipboard)`);
   vscode.window.showInformationMessage(`Puzzle Submitter: input saved to ${siteInputPath(provider.id)}.`);
   void panelProvider?.refresh();
+  void treeProvider?.refresh();
 }
 
 async function setTokenCommand(context: vscode.ExtensionContext): Promise<void> {
@@ -288,6 +293,7 @@ async function setTokenCommand(context: vscode.ExtensionContext): Promise<void> 
   if (token) {
     vscode.window.showInformationMessage(`Puzzle Submitter: token saved for ${provider.label}.`);
     void panelProvider?.refresh();
+    void treeProvider?.refresh();
   }
 }
 
@@ -297,12 +303,21 @@ async function clearTokenCommand(context: vscode.ExtensionContext): Promise<void
   const provider = providers[siteId];
   await clearToken(context.secrets, provider);
   void panelProvider?.refresh();
+  void treeProvider?.refresh();
   vscode.window.showInformationMessage(`Puzzle Submitter: token cleared for ${provider.label}.`);
 }
 
 export function activate(context: vscode.ExtensionContext): void {
   const view = new PuzzleSubmitterViewProvider(context);
   panelProvider = view;
+  const tree = new PuzzleTreeProvider(context);
+  treeProvider = tree;
+
+  const refreshAll = (editor?: vscode.TextEditor) => {
+    refreshStatusBar(editor ?? vscode.window.activeTextEditor);
+    void view.refresh();
+    void tree.refresh();
+  };
 
   context.subscriptions.push(
     vscode.commands.registerCommand('puzzleSubmitter.submitAnswer', () => submitAnswerCommand(context)),
@@ -312,27 +327,32 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('puzzleSubmitter.clearToken', () => clearTokenCommand(context)),
     vscode.commands.registerCommand('puzzleSubmitter.setSite', async () => {
       const site = await promptAndSaveSite(activeOrFirstFolder());
-      if (site) {
-        refreshStatusBar(vscode.window.activeTextEditor);
-        void view.refresh();
-      }
+      if (site) refreshAll();
+    }),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.refresh', () => tree.refresh()),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.benchmarkQuest', (node: TreeNode) => {
+      if (node?.kind === 'quest') return tree.benchmarkQuest(node);
+      return undefined;
+    }),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.benchmarkEvent', (node: TreeNode) => {
+      if (node?.kind === 'event') return tree.benchmarkEvent(node);
+      return undefined;
+    }),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.submitPart', (node: TreeNode) => {
+      if (node?.kind === 'part') return tree.submitPart(node);
+      return undefined;
     }),
     vscode.window.registerWebviewViewProvider('puzzleSubmitter.panel', view),
+    vscode.window.registerTreeDataProvider('puzzleSubmitter.tree', tree),
     getOutputChannel(),
     getStatusBarItem(),
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      refreshStatusBar(editor);
-      void view.refresh();
-    }),
+    vscode.window.onDidChangeActiveTextEditor((editor) => refreshAll(editor)),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('puzzleSubmitter.site')) {
-        refreshStatusBar(vscode.window.activeTextEditor);
-        void view.refresh();
-      }
+      if (e.affectsConfiguration('puzzleSubmitter.site')) refreshAll();
     })
   );
 
-  refreshStatusBar(vscode.window.activeTextEditor);
+  refreshAll();
 }
 
 export function deactivate(): void {

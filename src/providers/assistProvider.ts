@@ -10,6 +10,7 @@ import { PuzzleProvider, SiteId } from '../types';
 function createAssistProvider(config: {
   id: SiteId;
   label: string;
+  itemNoun: string;
   detectRe: RegExp;
   group: (match: RegExpExecArray) => string;
   index: (match: RegExpExecArray) => string;
@@ -19,6 +20,7 @@ function createAssistProvider(config: {
     id: config.id,
     label: config.label,
     maxPart: 1,
+    itemNoun: config.itemNoun,
     solverInputShape: 'text',
     tokenPrompt: `${config.label} has no known submission API, so no token is used here.`,
     detect(relativeFilePath) {
@@ -33,6 +35,7 @@ function createAssistProvider(config: {
 export const codyssiProvider = createAssistProvider({
   id: 'codyssi',
   label: 'Codyssi',
+  itemNoun: 'Day',
   detectRe: /events\/year_(\d{4})\/day_(\d{2})\//,
   group: (m) => m[1],
   index: (m) => String(Number(m[2])),
@@ -44,6 +47,7 @@ export const codyssiProvider = createAssistProvider({
 export const i18nPuzzlesProvider = createAssistProvider({
   id: 'i18n-puzzles',
   label: 'i18n-puzzles',
+  itemNoun: 'Puzzle',
   detectRe: /problems\/problem_(\d{2})\//,
   group: () => '', // flat numbering, no year/group on this site
   index: (m) => String(Number(m[1])),
@@ -53,6 +57,7 @@ export const i18nPuzzlesProvider = createAssistProvider({
 export const codingQuestProvider = createAssistProvider({
   id: 'codingquest',
   label: 'Coding Quest',
+  itemNoun: 'Day',
   detectRe: /events\/(challenge|practice)_(\d{4})\/day_(\d{2})\//,
   // Challenge and practice are separate tracks for the same year, so both are kept in
   // "group" to avoid conflating their progress — a configured runCommand's ${year}

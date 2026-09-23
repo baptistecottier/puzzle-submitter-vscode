@@ -57,6 +57,27 @@ The status bar item (bottom left) opens this panel when clicked. The panel only 
 the common path — if a file can't be auto-detected, it falls back to the same "pick
 manually" prompt the commands below use.
 
+## Puzzle tree
+
+The same Activity Bar container also has a **Puzzles** tree: every event/story/GridOS
+group found in the workspace, expanding to quests, expanding to parts — built by
+scanning the workspace for `.py` files the current site's provider recognizes (there's
+no "list all my puzzles" API to build this from instead).
+
+- **Run All Parts** (on a quest) / **Run All Quests** (on an event) — a **local,
+  offline benchmark**: runs `solver()` for each part and compares it against the answer
+  this workspace already has recorded as correct, with no network call. It's a
+  regression check against puzzles you've already solved, not a way to submit — neither
+  action ever contacts a puzzle site. ✅/❌ show a match/mismatch against the recorded
+  answer; ➖ means it ran fine but nothing was recorded yet to compare against; ⚪ means
+  no local input to run it against yet.
+- **Submit** (on a part) — the one deliberate way to actually submit from the tree,
+  always a single part: prefills the answer from the benchmark above (running the
+  solver fresh if it hasn't been run yet), lets you confirm or edit it, then submits
+  exactly like **Submit Answer** below.
+- **GridOS** quests (`gridos/gridos_NN/quest_N/...`) show up for browsing only, with no
+  Run/Submit actions — see [Known limitations](#known-limitations).
+
 ## Commands
 
 - **Puzzle Submitter: Submit Answer** — detects the puzzle from the active file (or asks).
@@ -119,6 +140,10 @@ manually" prompt the commands below use.
   story id is assumed to double as the API's `event` id — unverified, since this
   project's existing tooling only exercises yearly events. Yearly events
   (`events/year_YYYY/...`) are solid (see above).
+- **Everybody Codes GridOS** (`gridos/gridos_NN/quest_N/...`) has no known per-quest
+  `solver()` or submission endpoint — GridOS is a shared rule engine (`gridOS.py`) driven
+  by `.rules`/test-case files, not per-puzzle solution code. It's detected for browsing
+  in the [Puzzle tree](#puzzle-tree) only, with no Run/Submit actions.
 - **Codyssi's puzzle-page link** is the general challenges page, not a specific day —
   I couldn't confirm the per-day URL pattern.
 - **Coding Quest's puzzle-page link** is the homepage — the site's problem pages

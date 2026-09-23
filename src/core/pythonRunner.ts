@@ -2,9 +2,18 @@ import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { PuzzleInputParts, SolverInputShape } from '../types';
+import { PuzzleContext, PuzzleInputParts, PuzzleProvider, SolverInputShape } from '../types';
 
 const MARKER = '__PUZZLE_SUBMITTER_RESULT__';
+
+/** Whether "Run solver()" applies to this file/context: the provider declares a calling
+ * shape, the file is Python, and (for providers where it varies per puzzle, e.g. Everybody
+ * Codes' GridOS) the provider itself confirms this specific context supports it. */
+export function canRunSolver(provider: PuzzleProvider, ctx: PuzzleContext | undefined, filePath: string): boolean {
+  if (!provider.solverInputShape || !filePath.endsWith('.py')) return false;
+  if (!ctx) return true;
+  return provider.supportsRunner ? provider.supportsRunner(ctx) : true;
+}
 
 // Mirrors this project's own preprocessing(data)/solver(data) convention
 // (pythonfw/aocp.py, everybodycodes/scripts/ec.py, codyssi.py, ...). Two calling shapes:

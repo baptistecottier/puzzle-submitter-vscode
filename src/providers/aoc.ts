@@ -55,6 +55,7 @@ export const aocProvider: PuzzleProvider = {
   id: 'aoc',
   label: 'Advent of Code',
   maxPart: 2,
+  itemNoun: 'Day',
   solverInputShape: 'text',
   tokenPrompt:
     "Value of the 'session' cookie from adventofcode.com — log in, open dev tools → Application/Storage → Cookies.",

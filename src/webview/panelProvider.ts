@@ -5,7 +5,7 @@ import { peekSite, promptAndSaveSite } from '../core/siteResolver';
 import { getToken, requireToken, promptAndSaveToken, clearToken } from '../core/auth';
 import { getConfiguredRunCommand, runCommandForAnswer } from '../core/runCommand';
 import { resolvePythonInterpreter } from '../core/pythonInterpreter';
-import { runPythonSolver } from '../core/pythonRunner';
+import { canRunSolver, runPythonSolver } from '../core/pythonRunner';
 import { markSolved, nextUnsolvedPart, listSolvedPuzzles, SolvedPuzzle } from '../core/progress';
 import { promptManualContext } from '../core/manualContext';
 import { ensureLocalInput } from '../core/ensureInput';
@@ -123,7 +123,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
     const inputParts = this.ctx ? readLocalInput(folder, this.provider.id, this.ctx) : undefined;
     const currentPartText = this.ctx ? inputParts?.[String(this.ctx.part)] : undefined;
     const hasToken = this.provider.submit ? Boolean(await getToken(this.extensionContext.secrets, this.provider)) : false;
-    const supportsSolver = Boolean(this.provider.solverInputShape) && Boolean(editor?.document.uri.fsPath.endsWith('.py'));
+    const supportsSolver = editor ? canRunSolver(this.provider, this.ctx, editor.document.uri.fsPath) : false;
 
     return {
       site: { id: this.provider.id, label: this.provider.label },
@@ -318,7 +318,13 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       log(`Result: ${result.status} — ${result.message}`);
       this.lastResult = result;
       if (result.status === 'correct' || result.status === 'already-solved') {
-        await markSolved(this.extensionContext.workspaceState, this.provider, this.ctx, this.ctx.part);
+        await markSolved(
+          this.extensionContext.workspaceState,
+          this.provider,
+          this.ctx,
+          this.ctx.part,
+          result.status === 'correct' ? answer : undefined
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
