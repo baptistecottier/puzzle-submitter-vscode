@@ -1,0 +1,100 @@
+{
+  "name": "puzzle-submit",
+  "displayName": "Puzzle Submit",
+  "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code.",
+  "version": "0.1.0",
+  "publisher": "baptistecottier",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "advent of code",
+    "aoc",
+    "everybody codes",
+    "codyssi",
+    "i18n-puzzles",
+    "coding quest",
+    "puzzle"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "puzzleSubmit.submitAnswer",
+        "title": "Puzzle Submit: Submit Answer"
+      },
+      {
+        "command": "puzzleSubmit.fetchInput",
+        "title": "Puzzle Submit: Fetch Input"
+      },
+      {
+        "command": "puzzleSubmit.setToken",
+        "title": "Puzzle Submit: Set Token for Current Site"
+      },
+      {
+        "command": "puzzleSubmit.clearToken",
+        "title": "Puzzle Submit: Clear Token for Current Site"
+      },
+      {
+        "command": "puzzleSubmit.setSite",
+        "title": "Puzzle Submit: Set Site for Workspace"
+      }
+    ],
+    "configuration": {
+      "title": "Puzzle Submit",
+      "properties": {
+        "puzzleSubmit.site": {
+          "type": "string",
+          "enum": [
+            "aoc",
+            "everybodycodes",
+            "codyssi",
+            "i18n-puzzles",
+            "codingquest"
+          ],
+          "enumDescriptions": [
+            "Advent of Code",
+            "Everybody Codes",
+            "Codyssi",
+            "i18n-puzzles",
+            "Coding Quest"
+          ],
+          "scope": "window",
+          "description": "Which puzzle site this workspace submits to. Left unset, you'll be asked the first time you run a command."
+        },
+        "puzzleSubmit.runCommand": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "Optional shell command that prints an answer to stdout, offered as an alternative to typing the answer manually. Placeholders: ${year}, ${day}, ${part}, ${file}. The last non-empty line of stdout is used as the answer."
+        },
+        "puzzleSubmit.contact": {
+          "type": "string",
+          "default": "",
+          "scope": "application",
+          "description": "Your email or GitHub profile URL, sent in the User-Agent header of requests to puzzle sites that ask automated tools to identify themselves (e.g. Advent of Code)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.js && tsc --noEmit -p .",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "vscode:prepublish": "tsc --noEmit -p . && npm run package",
+    "test": "node --import tsx --test test/**/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.23.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
