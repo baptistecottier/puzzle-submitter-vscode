@@ -4,7 +4,7 @@ let channel: vscode.OutputChannel | undefined;
 
 export function getOutputChannel(): vscode.OutputChannel {
   if (!channel) {
-    channel = vscode.window.createOutputChannel('Puzzle Submit');
+    channel = vscode.window.createOutputChannel('Puzzle Submitter');
   }
   return channel;
 }

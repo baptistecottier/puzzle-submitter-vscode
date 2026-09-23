@@ -2,13 +2,13 @@ import * as vscode from 'vscode';
 import { SiteId } from '../types';
 import { allProviders, providers } from '../providers';
 
-const CONFIG_SECTION = 'puzzleSubmit';
+const CONFIG_SECTION = 'puzzleSubmitter';
 
 function isSiteId(value: unknown): value is SiteId {
   return typeof value === 'string' && value in providers;
 }
 
-/** Reads puzzleSubmit.site for the given workspace folder, prompting (and persisting) if unset. */
+/** Reads puzzleSubmitter.site for the given workspace folder, prompting (and persisting) if unset. */
 export async function resolveSite(scope: vscode.ConfigurationScope | undefined): Promise<SiteId | undefined> {
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION, scope);
   const configured = config.get<string>('site');
@@ -27,7 +27,7 @@ export async function promptAndSaveSite(scope: vscode.ConfigurationScope | undef
     return undefined;
   }
   const config = vscode.workspace.getConfiguration(CONFIG_SECTION, scope);
-  // puzzleSubmit.site is declared "window" scope in package.json, which does not
+  // puzzleSubmitter.site is declared "window" scope in package.json, which does not
   // support ConfigurationTarget.WorkspaceFolder — only User/Workspace. In the
   // single-folder-per-site setup this extension is built for, Workspace already
   // means "this folder's own .vscode/settings.json", so that's all we need.

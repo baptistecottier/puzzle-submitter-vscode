@@ -125,7 +125,7 @@ export const everybodyCodesProvider: PuzzleProvider = {
     // ec.py's own multi-case store (keyed by case id, e.g. "41" for the personal input) and
     // merging into it correctly isn't worth the risk of corrupting existing recorded cases.
     const quest = ctx.index.padStart(2, '0');
-    return `.puzzle-submit/everybodycodes/${ctx.group}/quest_${quest}_part${ctx.part}.input`;
+    return `.puzzle-submitter/everybodycodes/${ctx.group}/quest_${quest}_part${ctx.part}.input`;
   },
 
   async fetchInput(ctx, token) {

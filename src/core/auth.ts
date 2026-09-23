@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { PuzzleProvider } from '../types';
 
 function secretKey(siteId: string): string {
-  return `puzzleSubmit.token.${siteId}`;
+  return `puzzleSubmitter.token.${siteId}`;
 }
 
 export async function getToken(secrets: vscode.SecretStorage, provider: PuzzleProvider): Promise<string | undefined> {

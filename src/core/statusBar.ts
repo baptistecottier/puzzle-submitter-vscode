@@ -7,7 +7,7 @@ let item: vscode.StatusBarItem | undefined;
 export function getStatusBarItem(): vscode.StatusBarItem {
   if (!item) {
     item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    item.command = 'puzzleSubmit.submitAnswer';
+    item.command = 'puzzleSubmitter.submitAnswer';
   }
   return item;
 }
@@ -21,10 +21,10 @@ export function refreshStatusBar(editor: vscode.TextEditor | undefined): void {
     return;
   }
 
-  const siteId = vscode.workspace.getConfiguration('puzzleSubmit', workspaceFolder).get<string>('site');
+  const siteId = vscode.workspace.getConfiguration('puzzleSubmitter', workspaceFolder).get<string>('site');
   const provider: PuzzleProvider | undefined = siteId ? providers[siteId as keyof typeof providers] : undefined;
   if (!provider) {
-    bar.text = '$(question) Puzzle Submit';
+    bar.text = '$(question) Puzzle Submitter';
     bar.tooltip = 'No site configured for this workspace yet — click to submit and set one up.';
     bar.show();
     return;

@@ -3,8 +3,8 @@ import { PuzzleContext, PuzzleProvider, SubmitResult } from '../types';
 const DETECT_RE = /events\/year_(\d{4})\/day_(\d{2})\//;
 
 function userAgent(contact: string): string {
-  const who = contact.trim() || 'contact not configured (set puzzleSubmit.contact)';
-  return `puzzle-submit-vscode (${who})`;
+  const who = contact.trim() || 'contact not configured (set puzzleSubmitter.contact)';
+  return `puzzle-submitter-vscode (${who})`;
 }
 
 function cookieHeader(token: string): string {

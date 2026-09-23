@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { PuzzleContext, PuzzleProvider } from '../types';
 
 function progressKey(provider: PuzzleProvider, ctx: PuzzleContext): string {
-  return `puzzleSubmit.progress.${provider.id}.${ctx.group}.${ctx.index}`;
+  return `puzzleSubmitter.progress.${provider.id}.${ctx.group}.${ctx.index}`;
 }
 
 export function getSolvedParts(state: vscode.Memento, provider: PuzzleProvider, ctx: PuzzleContext): number[] {

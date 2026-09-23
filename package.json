@@ -1,6 +1,6 @@
 {
-  "name": "puzzle-submit",
-  "displayName": "Puzzle Submit",
+  "name": "puzzle-submitter",
+  "displayName": "Puzzle Submitter",
   "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code.",
   "version": "0.1.0",
   "publisher": "baptistecottier",
@@ -25,30 +25,30 @@
   "contributes": {
     "commands": [
       {
-        "command": "puzzleSubmit.submitAnswer",
-        "title": "Puzzle Submit: Submit Answer"
+        "command": "puzzleSubmitter.submitAnswer",
+        "title": "Puzzle Submitter: Submit Answer"
       },
       {
-        "command": "puzzleSubmit.fetchInput",
-        "title": "Puzzle Submit: Fetch Input"
+        "command": "puzzleSubmitter.fetchInput",
+        "title": "Puzzle Submitter: Fetch Input"
       },
       {
-        "command": "puzzleSubmit.setToken",
-        "title": "Puzzle Submit: Set Token for Current Site"
+        "command": "puzzleSubmitter.setToken",
+        "title": "Puzzle Submitter: Set Token for Current Site"
       },
       {
-        "command": "puzzleSubmit.clearToken",
-        "title": "Puzzle Submit: Clear Token for Current Site"
+        "command": "puzzleSubmitter.clearToken",
+        "title": "Puzzle Submitter: Clear Token for Current Site"
       },
       {
-        "command": "puzzleSubmit.setSite",
-        "title": "Puzzle Submit: Set Site for Workspace"
+        "command": "puzzleSubmitter.setSite",
+        "title": "Puzzle Submitter: Set Site for Workspace"
       }
     ],
     "configuration": {
-      "title": "Puzzle Submit",
+      "title": "Puzzle Submitter",
       "properties": {
-        "puzzleSubmit.site": {
+        "puzzleSubmitter.site": {
           "type": "string",
           "enum": [
             "aoc",
@@ -67,13 +67,13 @@
           "scope": "window",
           "description": "Which puzzle site this workspace submits to. Left unset, you'll be asked the first time you run a command."
         },
-        "puzzleSubmit.runCommand": {
+        "puzzleSubmitter.runCommand": {
           "type": "string",
           "default": "",
           "scope": "window",
           "description": "Optional shell command that prints an answer to stdout, offered as an alternative to typing the answer manually. Placeholders: ${year}, ${day}, ${part}, ${file}. The last non-empty line of stdout is used as the answer."
         },
-        "puzzleSubmit.contact": {
+        "puzzleSubmitter.contact": {
           "type": "string",
           "default": "",
           "scope": "application",

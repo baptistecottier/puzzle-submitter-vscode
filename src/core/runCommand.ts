@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { PuzzleContext } from '../types';
 
 export function getConfiguredRunCommand(scope: vscode.ConfigurationScope | undefined): string {
-  return vscode.workspace.getConfiguration('puzzleSubmit', scope).get<string>('runCommand', '').trim();
+  return vscode.workspace.getConfiguration('puzzleSubmitter', scope).get<string>('runCommand', '').trim();
 }
 
 function substitute(template: string, ctx: PuzzleContext, file: string): string {

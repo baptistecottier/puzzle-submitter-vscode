@@ -13,12 +13,12 @@ import { getOutputChannel, log } from './core/output';
 function requireWorkspaceEditor(): { editor: vscode.TextEditor; folder: vscode.WorkspaceFolder } | undefined {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
-    vscode.window.showErrorMessage('Puzzle Submit: open a solution file first.');
+    vscode.window.showErrorMessage('Puzzle Submitter: open a solution file first.');
     return undefined;
   }
   const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
   if (!folder) {
-    vscode.window.showErrorMessage('Puzzle Submit: the active file must be inside an open workspace folder.');
+    vscode.window.showErrorMessage('Puzzle Submitter: the active file must be inside an open workspace folder.');
     return undefined;
   }
   return { editor, folder };
@@ -82,7 +82,7 @@ async function resolveContext(
     detected.part = confirmed;
     return detected;
   }
-  vscode.window.showWarningMessage(`Puzzle Submit: couldn't detect a ${provider.label} puzzle from this file — enter it manually.`);
+  vscode.window.showWarningMessage(`Puzzle Submitter: couldn't detect a ${provider.label} puzzle from this file — enter it manually.`);
   return promptManualContext(provider);
 }
 
@@ -114,7 +114,7 @@ async function resolveAnswer(
     const output = await runCommandForAnswer(template, ctx, editor.document.uri.fsPath, folder.uri.fsPath);
     return vscode.window.showInputBox({ title: `${label} (from command output — edit if needed)`, value: output, ignoreFocusOut: true });
   } catch (error) {
-    vscode.window.showErrorMessage(`Puzzle Submit: ${error instanceof Error ? error.message : String(error)}`);
+    vscode.window.showErrorMessage(`Puzzle Submitter: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   }
 }
@@ -145,7 +145,7 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
 
   const token = await requireToken(context.secrets, provider);
   if (!token) return;
-  const contact = vscode.workspace.getConfiguration('puzzleSubmit').get<string>('contact', '');
+  const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
 
   log(`Submitting ${provider.label} ${ctx.group ? ctx.group + ' ' : ''}${ctx.index} part ${ctx.part}: ${answer}`);
 
@@ -171,7 +171,7 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log(`Error: ${message}`);
-        vscode.window.showErrorMessage(`Puzzle Submit: ${message}`);
+        vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`);
       }
     }
   );
@@ -205,7 +205,7 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
 
   const token = await requireToken(context.secrets, provider);
   if (!token) return;
-  const contact = vscode.workspace.getConfiguration('puzzleSubmit').get<string>('contact', '');
+  const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
 
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Fetching input from ${provider.label}…` },
@@ -219,7 +219,7 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log(`Error: ${message}`);
-        vscode.window.showErrorMessage(`Puzzle Submit: ${message}`);
+        vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`);
       }
     }
   );
@@ -235,7 +235,7 @@ async function setTokenCommand(context: vscode.ExtensionContext): Promise<void> 
   }
   const token = await promptAndSaveToken(context.secrets, provider);
   if (token) {
-    vscode.window.showInformationMessage(`Puzzle Submit: token saved for ${provider.label}.`);
+    vscode.window.showInformationMessage(`Puzzle Submitter: token saved for ${provider.label}.`);
   }
 }
 
@@ -244,16 +244,16 @@ async function clearTokenCommand(context: vscode.ExtensionContext): Promise<void
   if (!siteId) return;
   const provider = providers[siteId];
   await clearToken(context.secrets, provider);
-  vscode.window.showInformationMessage(`Puzzle Submit: token cleared for ${provider.label}.`);
+  vscode.window.showInformationMessage(`Puzzle Submitter: token cleared for ${provider.label}.`);
 }
 
 export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('puzzleSubmit.submitAnswer', () => submitAnswerCommand(context)),
-    vscode.commands.registerCommand('puzzleSubmit.fetchInput', () => fetchInputCommand(context)),
-    vscode.commands.registerCommand('puzzleSubmit.setToken', () => setTokenCommand(context)),
-    vscode.commands.registerCommand('puzzleSubmit.clearToken', () => clearTokenCommand(context)),
-    vscode.commands.registerCommand('puzzleSubmit.setSite', async () => {
+    vscode.commands.registerCommand('puzzleSubmitter.submitAnswer', () => submitAnswerCommand(context)),
+    vscode.commands.registerCommand('puzzleSubmitter.fetchInput', () => fetchInputCommand(context)),
+    vscode.commands.registerCommand('puzzleSubmitter.setToken', () => setTokenCommand(context)),
+    vscode.commands.registerCommand('puzzleSubmitter.clearToken', () => clearTokenCommand(context)),
+    vscode.commands.registerCommand('puzzleSubmitter.setSite', async () => {
       const site = await promptAndSaveSite(activeOrFirstFolder());
       if (site) refreshStatusBar(vscode.window.activeTextEditor);
     }),
@@ -261,7 +261,7 @@ export function activate(context: vscode.ExtensionContext): void {
     getStatusBarItem(),
     vscode.window.onDidChangeActiveTextEditor(refreshStatusBar),
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('puzzleSubmit.site')) {
+      if (e.affectsConfiguration('puzzleSubmitter.site')) {
         refreshStatusBar(vscode.window.activeTextEditor);
       }
     })
