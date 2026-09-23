@@ -6,4 +6,5 @@ test/**
 esbuild.js
 tsconfig.json
 *.vsix
+*.tiff
 **/*.map
