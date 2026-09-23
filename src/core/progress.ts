@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { PuzzleContext, PuzzleProvider } from '../types';
+import { maxPartFor } from './puzzleParts';
 
 /** Per part: the confirmed-correct answer text (from a fresh 'correct' submission), or
  * `true` when we know it's solved but don't have a confirmed answer to benchmark
@@ -45,6 +46,23 @@ export function getRecordedAnswer(
   return typeof value === 'string' ? value : undefined;
 }
 
+export type AnswerCheck = 'match' | 'mismatch' | 'no-reference';
+
+/** Compares a candidate answer against any already-confirmed answer for this part,
+ * before it's submitted — so a caller can skip a pointless re-submission ('match') or
+ * flag one that contradicts a known-correct answer ('mismatch') instead of spending a
+ * submission attempt on it. 'no-reference' (nothing recorded yet) is the common case. */
+export function checkAgainstRecorded(
+  state: vscode.Memento,
+  provider: PuzzleProvider,
+  ctx: PuzzleContext,
+  answer: string
+): AnswerCheck {
+  const recorded = getRecordedAnswer(state, provider, ctx, ctx.part);
+  if (recorded === undefined) return 'no-reference';
+  return recorded === answer ? 'match' : 'mismatch';
+}
+
 /** Marks a part solved. Pass `answer` for a fresh 'correct' result (the confirmed-correct
  * text); omit it for 'already-solved' (this run's guess wasn't necessarily the one that
  * solved it) — an existing confirmed answer is kept, never downgraded to "unknown". */
@@ -61,15 +79,16 @@ export async function markSolved(
   await state.update(progressKey(provider, ctx), { ...existing, [String(part)]: value });
 }
 
-/** First part not yet marked solved, defaulting to the provider's last part once everything else is done. */
+/** First part not yet marked solved, defaulting to this puzzle's last part once everything else is done. */
 export function nextUnsolvedPart(state: vscode.Memento, provider: PuzzleProvider, ctx: PuzzleContext): number {
   const solved = new Set(getSolvedParts(state, provider, ctx));
-  for (let part = 1; part <= provider.maxPart; part++) {
+  const max = maxPartFor(provider, ctx);
+  for (let part = 1; part <= max; part++) {
     if (!solved.has(part)) {
       return part;
     }
   }
-  return provider.maxPart;
+  return max;
 }
 
 export interface SolvedPuzzle {
@@ -95,4 +114,33 @@ export function listSolvedPuzzles(state: vscode.Memento, provider: PuzzleProvide
   }
   results.sort((a, b) => Number(a.index) - Number(b.index));
   return results;
+}
+
+export interface SolvedGroupSummary {
+  group: string;
+  /** Display label, matching the tree's own group formatting (e.g. "GridOS 1", "Story 4"). */
+  label: string;
+  puzzles: number;
+  stars: number;
+}
+
+/** listSolvedPuzzles collapsed to one entry per event/story — for compact display (e.g.
+ * the sidebar panel), where one line per solved day doesn't scale to years of puzzles. */
+export function summarizeSolvedByGroup(state: vscode.Memento, provider: PuzzleProvider): SolvedGroupSummary[] {
+  const byGroup = new Map<string, SolvedGroupSummary>();
+  for (const puzzle of listSolvedPuzzles(state, provider)) {
+    const existing = byGroup.get(puzzle.group);
+    if (existing) {
+      existing.puzzles += 1;
+      existing.stars += puzzle.parts.length;
+      continue;
+    }
+    byGroup.set(puzzle.group, {
+      group: puzzle.group,
+      label: provider.groupLabel ? provider.groupLabel(puzzle.group) : puzzle.group || '(ungrouped)',
+      puzzles: 1,
+      stars: puzzle.parts.length,
+    });
+  }
+  return [...byGroup.values()].sort((a, b) => a.group.localeCompare(b.group));
 }

@@ -255,11 +255,12 @@ function renderProgress(root) {
     root.appendChild(el('div', { class: 'empty', text: 'Nothing marked solved yet.' }));
     return;
   }
-  for (const p of state.progress) {
-    const label = [p.group, p.index].filter(Boolean).join(' · ');
+  // One line per event/story, not per day — years of puzzles would otherwise push this
+  // list far past what fits in a sidebar. Per-day detail lives in the Puzzles tree.
+  for (const g of state.progress) {
     root.appendChild(el('div', { class: 'progress-item' }, [
-      el('span', { text: label }),
-      el('span', { class: 'stars', text: '⭐'.repeat(p.parts.length) }),
+      el('span', { text: g.label }),
+      el('span', { class: 'stars', text: g.puzzles + ' · ⭐ ' + g.stars }),
     ]));
   }
 }

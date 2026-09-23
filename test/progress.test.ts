@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getRecordedAnswer, getSolvedParts, listSolvedPuzzles, markSolved, nextUnsolvedPart } from '../src/core/progress';
+import {
+  checkAgainstRecorded,
+  getRecordedAnswer,
+  getSolvedParts,
+  listSolvedPuzzles,
+  markSolved,
+  nextUnsolvedPart,
+  summarizeSolvedByGroup,
+} from '../src/core/progress';
 import { PuzzleProvider } from '../src/types';
 
 // Minimal in-memory stand-in for vscode.Memento — only what progress.ts actually calls.
@@ -104,4 +112,89 @@ test('nextUnsolvedPart defaults to the last part once everything is solved', asy
   await markSolved(state, providerWithParts, ctx, 1, 'a');
   await markSolved(state, providerWithParts, ctx, 2, 'b');
   assert.equal(nextUnsolvedPart(state, providerWithParts, ctx), 2);
+});
+
+test('nextUnsolvedPart respects a per-puzzle maxPartFor override (e.g. AoC day 25/12 having only one part)', async () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  const lastDayProvider = {
+    id: 'aoc',
+    maxPart: 2,
+    maxPartFor: (c: { index: string }) => (c.index === '25' ? 1 : 2),
+  } as unknown as PuzzleProvider;
+
+  const normalDay = { group: '2023', index: '10', part: 1 };
+  assert.equal(nextUnsolvedPart(state, lastDayProvider, normalDay), 1);
+  await markSolved(state, lastDayProvider, normalDay, 1, 'a');
+  assert.equal(nextUnsolvedPart(state, lastDayProvider, normalDay), 2);
+
+  const lastDay = { group: '2023', index: '25', part: 1 };
+  assert.equal(nextUnsolvedPart(state, lastDayProvider, lastDay), 1);
+  await markSolved(state, lastDayProvider, lastDay, 1, 'z');
+  // Everything (the single part) is solved — defaults to 1, not the provider's
+  // general maxPart of 2, which day 25 never actually has.
+  assert.equal(nextUnsolvedPart(state, lastDayProvider, lastDay), 1);
+});
+
+test('checkAgainstRecorded: no-reference when nothing is recorded for this part', () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  const ctx = { group: '2024', index: '9', part: 1 };
+  assert.equal(checkAgainstRecorded(state, fakeProvider, ctx, '42'), 'no-reference');
+});
+
+test('checkAgainstRecorded: no-reference when the part is solved but has no answer text (e.g. old already-solved)', async () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  const ctx = { group: '2024', index: '9', part: 1 };
+  await markSolved(state, fakeProvider, ctx, 1); // no answer -> stored as `true`
+  assert.equal(checkAgainstRecorded(state, fakeProvider, ctx, '42'), 'no-reference');
+});
+
+test('checkAgainstRecorded: match when the candidate equals the recorded answer', async () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  const ctx = { group: '2024', index: '9', part: 1 };
+  await markSolved(state, fakeProvider, ctx, 1, '42');
+  assert.equal(checkAgainstRecorded(state, fakeProvider, ctx, '42'), 'match');
+});
+
+test('checkAgainstRecorded: mismatch when the candidate differs from the recorded answer', async () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  const ctx = { group: '2024', index: '9', part: 1 };
+  await markSolved(state, fakeProvider, ctx, 1, '42');
+  assert.equal(checkAgainstRecorded(state, fakeProvider, ctx, '43'), 'mismatch');
+});
+
+test('summarizeSolvedByGroup is empty when nothing has been solved', () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  assert.deepEqual(summarizeSolvedByGroup(state, fakeProvider), []);
+});
+
+test('summarizeSolvedByGroup collapses many solved days into one entry per group, counting puzzles and stars separately', async () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  await markSolved(state, fakeProvider, { group: '2015', index: '1', part: 1 }, 1, 'a');
+  await markSolved(state, fakeProvider, { group: '2015', index: '1', part: 1 }, 2, 'b');
+  await markSolved(state, fakeProvider, { group: '2015', index: '2', part: 1 }, 1, 'c'); // only part 1
+  await markSolved(state, fakeProvider, { group: '2022', index: '1', part: 1 }, 1, 'd');
+
+  assert.deepEqual(summarizeSolvedByGroup(state, fakeProvider), [
+    { group: '2015', label: '2015', puzzles: 2, stars: 3 },
+    { group: '2022', label: '2022', puzzles: 1, stars: 1 },
+  ]);
+});
+
+test('summarizeSolvedByGroup uses the provider\'s groupLabel when it has one', async () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  const gridosProvider = {
+    id: 'everybodycodes',
+    groupLabel: (group: string) => 'GridOS ' + group.replace('gridos-', ''),
+  } as PuzzleProvider;
+  await markSolved(state, gridosProvider, { group: 'gridos-1', index: '1', part: 1 }, 1, 'a');
+  assert.deepEqual(summarizeSolvedByGroup(state, gridosProvider), [
+    { group: 'gridos-1', label: 'GridOS 1', puzzles: 1, stars: 1 },
+  ]);
+});
+
+test('summarizeSolvedByGroup never mixes different providers', async () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  await markSolved(state, fakeProvider, { group: '2024', index: '1', part: 1 }, 1, 'a');
+  await markSolved(state, otherProvider, { group: '2024', index: '1', part: 1 }, 1, 'b');
+  assert.deepEqual(summarizeSolvedByGroup(state, fakeProvider), [{ group: '2024', label: '2024', puzzles: 1, stars: 1 }]);
 });

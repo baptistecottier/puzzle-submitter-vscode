@@ -18,11 +18,14 @@ export function canRunSolver(provider: PuzzleProvider, ctx: PuzzleContext | unde
 // Mirrors this project's own preprocessing(data)/solver(data) convention
 // (pythonfw/aocp.py, everybodycodes/scripts/ec.py, codyssi.py, ...). Two calling shapes:
 // 'text' hands solver() the single relevant part's raw string (aocp.py's convention) —
-// here, preprocessing()'s result is unpacked into solver(*args) when it's a tuple/list,
-// exactly like aocp.py's solve_day() does. 'parts-dict' hands solver() every fetched
-// part at once as one dict argument {1: ..., 2: ..., 3: ...} (ec.py's run_solver) —
-// ec.py always calls solver(solver_input) with exactly one argument, even when
-// preprocessing() returns a tuple/list, so 'parts-dict' never unpacks.
+// here, preprocessing()'s result is unpacked into solver(*args) only when it's
+// specifically a tuple (not a list), exactly matching aocp.py's own
+// isinstance(puzzle_input, builtins.tuple) check. Conflating tuple and list here (an
+// earlier version of this file did) broke a real day_03.py whose preprocessing() returns
+// a per-character list of (dx, dy) tuples meant to be consumed as one structure, not
+// splatted into thousands of positional args. 'parts-dict' hands solver() every fetched
+// part at once as one dict argument {1: ..., 2: ..., 3: ...} (ec.py's run_solver), never
+// unpacking regardless of what preprocessing() returns.
 const BOOTSTRAP = `
 import importlib.util, json, os, sys
 
@@ -50,7 +53,7 @@ if hasattr(module, "preprocessing"):
 if not hasattr(module, "solver"):
     raise SystemExit("No solver() function found in " + solution_path)
 
-if shape == "text" and isinstance(data, (tuple, list)):
+if shape == "text" and isinstance(data, tuple):
     result = module.solver(*data)
 else:
     result = module.solver(data)
@@ -71,14 +74,17 @@ export interface PythonRunResult {
   parts: string[];
 }
 
-/** Runs preprocessing()/solver() from a Python solution file against locally-cached input. */
+/** Runs preprocessing()/solver() from a Python solution file against locally-cached input.
+ * Killed after timeoutSeconds if it hasn't finished — see puzzleSubmitter.solverTimeoutSeconds,
+ * which callers resolve and pass in (this file stays vscode-free so it's plain-Node testable). */
 export function runPythonSolver(
   pythonPath: string,
   solutionFile: string,
   inputParts: PuzzleInputParts,
   shape: SolverInputShape,
   targetPart: number,
-  cwd: string
+  cwd: string,
+  timeoutSeconds: number
 ): Promise<PythonRunResult> {
   return new Promise((resolve, reject) => {
     const tag = `${Date.now()}-${process.pid}`;
@@ -95,9 +101,13 @@ export function runPythonSolver(
     cp.execFile(
       pythonPath,
       [bootstrapPath, solutionFile, partsPath, shape, String(targetPart), MARKER],
-      { cwd, timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
+      { cwd, timeout: timeoutSeconds * 1000, maxBuffer: 10 * 1024 * 1024 },
       (error, stdout, stderr) => {
         cleanup();
+        if (error?.killed && error.signal) {
+          reject(new Error(`Solver timed out after ${timeoutSeconds}s (puzzleSubmitter.solverTimeoutSeconds) — killed.`));
+          return;
+        }
         if (error) {
           reject(new Error(`Solver failed (${pythonPath}): ${error.message}${stderr ? `\n${stderr.trim()}` : ''}`));
           return;

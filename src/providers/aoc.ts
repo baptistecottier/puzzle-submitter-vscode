@@ -30,6 +30,17 @@ export function parseAocResponse(html: string): SubmitResult {
   return { status: 'unknown', message: 'Unexpected response from Advent of Code — check the output channel.' };
 }
 
+/** Pure so it can be unit tested without a network call. The day page lists each solved
+ * part's confirmed answer in order ("Your puzzle answer was <code>...</code>"), part 1
+ * first — this is how the AoC community's own tooling (e.g. the `aocd` package) reads
+ * back answers for already-solved days, since the submit response for an already-solved
+ * part never repeats the answer text. AoC's real markup wraps this across lines
+ * ("was\n            <code>74</code>"), so the gap before <code> has to tolerate
+ * whitespace/newlines, not just a single literal space. */
+export function parseRecordedAnswers(html: string): string[] {
+  return [...html.matchAll(/Your puzzle answer was\s*<code[^>]*>([^<]*)<\/code>/gi)].map((m) => m[1].trim());
+}
+
 async function fetchAoc(url: string, token: string, contact: string, init: RequestInit = {}): Promise<Response> {
   const response = await fetch(url, {
     ...init,
@@ -66,6 +77,15 @@ export const aocProvider: PuzzleProvider = {
     return { group: match[1], index: String(Number(match[2])), part: 1 };
   },
 
+  // The event's last day has always been a single-part puzzle (it unlocks once you have
+  // every other star, and completing it grants the 50th star for free — no second part).
+  // Which day counts as "last" isn't fixed: it's day 25 for 2015-2024, but the event
+  // shortened to 12 days starting in 2025.
+  maxPartFor(ctx) {
+    const lastDay = Number(ctx.group) >= 2025 ? 12 : 25;
+    return Number(ctx.index) === lastDay ? 1 : 2;
+  },
+
   puzzleUrl(ctx: PuzzleContext) {
     return `https://adventofcode.com/${ctx.group}/day/${ctx.index}`;
   },
@@ -75,6 +95,11 @@ export const aocProvider: PuzzleProvider = {
     const text = (await response.text()).replace(/\n$/, '');
     // AoC has one input per day, shared by both parts.
     return { '1': text, '2': text };
+  },
+
+  async fetchRecordedAnswers(ctx, token, contact) {
+    const response = await fetchAoc(`https://adventofcode.com/${ctx.group}/day/${ctx.index}`, token, contact);
+    return parseRecordedAnswers(await response.text());
   },
 
   async submit(ctx, token, answer, contact) {

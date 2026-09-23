@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { PuzzleContext, PuzzleProvider } from '../types';
+import { maxPartFor } from './puzzleParts';
 
 /** Prompts for group/index/part by hand — used when detection fails, and as the sidebar
  * panel's fallback (it has no manual-entry form of its own, see panelProvider.ts). */
@@ -16,8 +17,9 @@ export async function promptManualContext(provider: PuzzleProvider): Promise<Puz
   });
   if (group === undefined) return undefined;
 
+  const max = maxPartFor(provider, { group: group.trim(), index: index.trim(), part: 1 });
   const part = await vscode.window.showQuickPick(
-    Array.from({ length: provider.maxPart }, (_, i) => String(i + 1)),
+    Array.from({ length: max }, (_, i) => String(i + 1)),
     { title: 'Which part?' }
   );
   if (!part) return undefined;

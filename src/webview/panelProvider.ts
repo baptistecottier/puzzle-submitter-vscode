@@ -4,9 +4,12 @@ import { providers } from '../providers';
 import { peekSite, promptAndSaveSite } from '../core/siteResolver';
 import { getToken, requireToken, promptAndSaveToken, clearToken } from '../core/auth';
 import { getConfiguredRunCommand, runCommandForAnswer } from '../core/runCommand';
-import { resolvePythonInterpreter } from '../core/pythonInterpreter';
+import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from '../core/pythonInterpreter';
 import { canRunSolver, runPythonSolver } from '../core/pythonRunner';
-import { markSolved, nextUnsolvedPart, listSolvedPuzzles, SolvedPuzzle } from '../core/progress';
+import { maxPartFor } from '../core/puzzleParts';
+import { nextUnsolvedPart, summarizeSolvedByGroup, SolvedGroupSummary } from '../core/progress';
+import { guardSubmit } from '../core/submitGuard';
+import { recordSubmitResult } from '../core/submitRecorder';
 import { promptManualContext } from '../core/manualContext';
 import { ensureLocalInput } from '../core/ensureInput';
 import { readLocalInput, siteInputPath, writeLocalInput } from '../core/localInput';
@@ -27,7 +30,7 @@ interface PanelState {
   supportsFetch: boolean;
   supportsSolver: boolean;
   hasRunCommand: boolean;
-  progress: SolvedPuzzle[];
+  progress: SolvedGroupSummary[];
   lastResult?: { status: string; message: string };
 }
 
@@ -128,7 +131,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
     return {
       site: { id: this.provider.id, label: this.provider.label },
       context: this.ctx
-        ? { group: this.ctx.group, index: this.ctx.index, part: this.ctx.part, maxPart: this.provider.maxPart }
+        ? { group: this.ctx.group, index: this.ctx.index, part: this.ctx.part, maxPart: maxPartFor(this.provider, this.ctx) }
         : undefined,
       inputCached: Boolean(currentPartText),
       inputPreview: currentPartText
@@ -143,7 +146,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       supportsFetch: Boolean(this.provider.fetchInput),
       supportsSolver,
       hasRunCommand: Boolean(getConfiguredRunCommand(folder)),
-      progress: listSolvedPuzzles(this.extensionContext.workspaceState, this.provider),
+      progress: summarizeSolvedByGroup(this.extensionContext.workspaceState, this.provider),
       lastResult: this.lastResult,
     };
   }
@@ -268,7 +271,8 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
         inputParts,
         this.provider.solverInputShape,
         this.ctx.part,
-        folder.uri.fsPath
+        folder.uri.fsPath,
+        resolveSolverTimeoutSeconds(folder)
       );
       this.view.webview.postMessage({ type: 'answerFilled', value: parts[this.ctx.part - 1] ?? parts[0] ?? '' });
     } catch (error) {
@@ -306,6 +310,14 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    const guard = await guardSubmit(this.extensionContext.workspaceState, this.provider, this.ctx, answer);
+    if (guard === 'cancelled') return;
+    if (guard === 'skip') {
+      this.lastResult = { status: 'already-solved', message: `"${answer}" already matches the recorded answer — not submitting again.` };
+      await this.postState();
+      return;
+    }
+
     const token = await requireToken(this.extensionContext.secrets, this.provider);
     if (!token) return;
     const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
@@ -317,15 +329,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       const result = await this.provider.submit(this.ctx, token, answer, contact);
       log(`Result: ${result.status} — ${result.message}`);
       this.lastResult = result;
-      if (result.status === 'correct' || result.status === 'already-solved') {
-        await markSolved(
-          this.extensionContext.workspaceState,
-          this.provider,
-          this.ctx,
-          this.ctx.part,
-          result.status === 'correct' ? answer : undefined
-        );
-      }
+      await recordSubmitResult(this.extensionContext.workspaceState, this.provider, this.ctx, answer, result, token, contact);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log(`Error: ${message}`);

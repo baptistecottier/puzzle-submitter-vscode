@@ -2,7 +2,7 @@
   "name": "puzzle-submitter",
   "displayName": "Puzzle Submitter",
   "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code.",
-  "version": "0.6.1",
+  "version": "0.2.0",
   "publisher": "baptistecottier",
   "license": "MIT",
   "icon": "icon.png",
@@ -63,6 +63,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "puzzleSubmitter.tree.sync",
+        "title": "Puzzle Submitter: Sync with Site (Fetch Input + Reference Answers + Run All)",
+        "icon": "$(sync)"
+      },
+      {
         "command": "puzzleSubmitter.tree.benchmarkQuest",
         "title": "Run All Parts (Benchmark)",
         "icon": "$(play)"
@@ -71,6 +76,11 @@
         "command": "puzzleSubmitter.tree.benchmarkEvent",
         "title": "Run All Quests (Benchmark)",
         "icon": "$(run-all)"
+      },
+      {
+        "command": "puzzleSubmitter.tree.backfillEvent",
+        "title": "Puzzle Submitter: Fetch Reference Answers from Site",
+        "icon": "$(cloud-download)"
       },
       {
         "command": "puzzleSubmitter.tree.submitPart",
@@ -104,6 +114,11 @@
     "menus": {
       "view/title": [
         {
+          "command": "puzzleSubmitter.tree.sync",
+          "when": "view == puzzleSubmitter.tree",
+          "group": "navigation"
+        },
+        {
           "command": "puzzleSubmitter.tree.refresh",
           "when": "view == puzzleSubmitter.tree",
           "group": "navigation"
@@ -114,6 +129,11 @@
           "command": "puzzleSubmitter.tree.benchmarkEvent",
           "when": "view == puzzleSubmitter.tree && viewItem == puzzleSubmitter.event",
           "group": "inline"
+        },
+        {
+          "command": "puzzleSubmitter.tree.backfillEvent",
+          "when": "view == puzzleSubmitter.tree && viewItem == puzzleSubmitter.event",
+          "group": "2_backfill"
         },
         {
           "command": "puzzleSubmitter.tree.benchmarkQuest",
@@ -166,6 +186,13 @@
           "default": "",
           "scope": "window",
           "description": "Python interpreter used by \"Run solver() from this file\". Left unset, this workspace's .venv/bin/python is used if present, otherwise python3 on PATH."
+        },
+        "puzzleSubmitter.solverTimeoutSeconds": {
+          "type": "integer",
+          "default": 60,
+          "minimum": 1,
+          "scope": "window",
+          "description": "How long a single preprocessing()/solver() run is allowed before it's killed. Matters most for bulk runs (Run All Quests, Sync with Site), where one hung or infinite-looping solution shouldn't stall the whole run."
         }
       }
     }

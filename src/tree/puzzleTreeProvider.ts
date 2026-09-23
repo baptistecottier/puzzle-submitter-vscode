@@ -3,12 +3,19 @@ import { PuzzleContext, PuzzleProvider } from '../types';
 import { providers } from '../providers';
 import { peekSite } from '../core/siteResolver';
 import { canRunSolver, runPythonSolver } from '../core/pythonRunner';
-import { resolvePythonInterpreter } from '../core/pythonInterpreter';
+import { maxPartFor } from '../core/puzzleParts';
+import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from '../core/pythonInterpreter';
 import { ensureLocalInput } from '../core/ensureInput';
 import { benchmarkPart, PartBenchmark } from '../core/benchmark';
 import { requireToken } from '../core/auth';
-import { markSolved } from '../core/progress';
+import { getRecordedAnswer, markSolved } from '../core/progress';
+import { guardSubmit } from '../core/submitGuard';
+import { recordSubmitResult } from '../core/submitRecorder';
 import { log } from '../core/output';
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface QuestEntry {
   filePath: string;
@@ -133,8 +140,9 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         .map(([index, entry]) => ({ kind: 'quest', group: node.group, index, filePath: entry.filePath }) satisfies TreeNode);
     }
     if (node.kind === 'quest') {
+      const max = maxPartFor(this.provider, { group: node.group, index: node.index, part: 1 });
       return Array.from(
-        { length: this.provider.maxPart },
+        { length: max },
         (_, i) => ({ kind: 'part', group: node.group, index: node.index, part: i + 1, filePath: node.filePath }) satisfies TreeNode
       );
     }
@@ -252,14 +260,204 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     this.reportTally(label, totals);
   }
 
+  /** Reads back confirmed-correct answers straight from the site's own puzzle page (aoc:
+   * "Your puzzle answer was ..."), for every quest in this event — including ones solved
+   * long before this extension ever recorded anything. Unlike benchmarking, this needs no
+   * local solver at all; unlike re-submitting, it actually gets the answer text back,
+   * since an "already solved" submit response never repeats it. Only sites that implement
+   * fetchRecordedAnswers support this (aoc, for now). */
+  async backfillEvent(node: Extract<TreeNode, { kind: 'event' }>): Promise<void> {
+    if (!this.provider || !this.folder) return;
+    const provider = this.provider;
+    const fetchRecordedAnswers = provider.fetchRecordedAnswers;
+    if (!fetchRecordedAnswers) {
+      vscode.window.showInformationMessage(
+        `${provider.label} has no known way to read back already-solved answers from the site.`
+      );
+      return;
+    }
+    const perGroup = this.quests.get(node.group) ?? new Map<string, QuestEntry>();
+    if (perGroup.size === 0) return;
+
+    const token = await requireToken(this.extensionContext.secrets, provider);
+    if (!token) return;
+    const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
+    const label = this.groupLabel(node.group);
+    const indexes = [...perGroup.keys()].sort((a, b) => Number(a) - Number(b));
+
+    let found = 0;
+    let filled = 0;
+    let aborted = false;
+
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Puzzle Submitter: reading recorded answers for ${label} from ${provider.label}…` },
+      async (progress) => {
+        for (let i = 0; i < indexes.length; i++) {
+          const index = indexes[i];
+          const ctx: PuzzleContext = { group: node.group, index, part: 1 };
+          try {
+            const answers = await fetchRecordedAnswers(ctx, token, contact);
+            for (let p = 0; p < answers.length; p++) {
+              const part = p + 1;
+              const already = getRecordedAnswer(this.extensionContext.workspaceState, provider, ctx, part);
+              if (already === undefined) filled++;
+              found++;
+              await markSolved(this.extensionContext.workspaceState, provider, { ...ctx, part }, part, answers[p]);
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            log(`Backfill: ${label} ${provider.itemNoun} ${index}: ${message}`);
+            // A failure on the very first request is almost certainly a bad/expired
+            // token — the rest would just repeat the same error. A later one is more
+            // likely puzzle-specific (not unlocked, transient network blip); skip it and
+            // keep going rather than losing everything found so far.
+            if (i === 0) {
+              vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`);
+              aborted = true;
+              return;
+            }
+          }
+          progress.report({ message: `${provider.itemNoun} ${index} (${i + 1}/${indexes.length})`, increment: 100 / indexes.length });
+          if (i < indexes.length - 1) await sleep(300); // be polite to the site — this is 1 GET per quest, not answer submission
+        }
+      }
+    );
+
+    this._onDidChangeTreeData.fire();
+    if (!aborted) {
+      vscode.window.showInformationMessage(`${label}: found ${found} recorded answer(s) on ${provider.label} (${filled} new).`);
+    }
+  }
+
+  /**
+   * The one-click "make everything consistent with the site" action, across every event
+   * currently in the tree, not just one: for each quest, fetches input if it's missing,
+   * fetches reference answers if any part is missing one (see backfillEvent), then runs
+   * the solver and compares (see benchmarkOneQuest) — the full pipeline in one pass
+   * instead of fetching/backfilling/benchmarking by hand, event by event, year by year.
+   * Anything already cached is skipped, so a repeat sync is cheap. Sites with no
+   * network API at all (codyssi, i18n-puzzles, coding quest) still get the benchmark
+   * pass, across every event at once, without any token prompt.
+   */
+  async syncWithSite(): Promise<void> {
+    if (!this.provider || !this.folder) return;
+    const provider = this.provider;
+    const folder = this.folder;
+    const state = this.extensionContext.workspaceState;
+
+    const jobs: { group: string; index: string; filePath: string }[] = [];
+    for (const [group, perGroup] of this.quests) {
+      for (const [index, entry] of perGroup) {
+        jobs.push({ group, index, filePath: entry.filePath });
+      }
+    }
+    if (jobs.length === 0) {
+      vscode.window.showInformationMessage('Puzzle Submitter: no quests found in this workspace to sync.');
+      return;
+    }
+
+    const needsNetwork = Boolean(provider.fetchInput || provider.fetchRecordedAnswers);
+    let token: string | undefined;
+    if (needsNetwork) {
+      token = await requireToken(this.extensionContext.secrets, provider);
+      if (!token) return;
+    }
+    const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
+
+    const totals: Tally = { match: 0, mismatch: 0, other: 0 };
+    let aborted = false;
+    let anyNetworkSucceeded = false;
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Puzzle Submitter: syncing ${provider.label} with the site…`,
+        cancellable: true,
+      },
+      async (progress, cancelToken) => {
+        for (let i = 0; i < jobs.length; i++) {
+          if (cancelToken.isCancellationRequested) {
+            aborted = true;
+            return;
+          }
+          const { group, index, filePath } = jobs[i];
+          const ctx: PuzzleContext = { group, index, part: 1 };
+          progress.report({
+            message: `${this.groupLabel(group)} ${provider.itemNoun} ${index} (${i + 1}/${jobs.length})`,
+            increment: 100 / jobs.length,
+          });
+
+          if (token && provider.fetchInput) {
+            try {
+              await ensureLocalInput(provider, ctx, folder, this.extensionContext.secrets);
+              anyNetworkSucceeded = true;
+            } catch (error) {
+              log(`Sync: input fetch failed for ${group} ${index}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            await sleep(300);
+          }
+
+          if (token && provider.fetchRecordedAnswers) {
+            const stillMissing = Array.from({ length: maxPartFor(provider, ctx) }, (_, p) => p + 1).some(
+              (part) => getRecordedAnswer(state, provider, ctx, part) === undefined
+            );
+            if (stillMissing) {
+              try {
+                const answers = await provider.fetchRecordedAnswers(ctx, token, contact);
+                for (let p = 0; p < answers.length; p++) {
+                  await markSolved(state, provider, { ...ctx, part: p + 1 }, p + 1, answers[p]);
+                }
+                anyNetworkSucceeded = true;
+              } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                log(`Sync: reference fetch failed for ${group} ${index}: ${message}`);
+                // Same "first failure is probably a bad token" heuristic as backfillEvent
+                // — but only before anything has ever succeeded this run, since a prior
+                // successful fetch already proves the token is fine.
+                if (!anyNetworkSucceeded) {
+                  vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`);
+                  aborted = true;
+                  return;
+                }
+              }
+              await sleep(300);
+            }
+          }
+
+          const tally = await this.benchmarkOneQuest(group, index, filePath);
+          totals.match += tally.match;
+          totals.mismatch += tally.mismatch;
+          totals.other += tally.other;
+        }
+      }
+    );
+
+    this._onDidChangeTreeData.fire();
+    if (!aborted) {
+      vscode.window.showInformationMessage(
+        `Sync complete: ${this.describeTally(totals)} across ${jobs.length} ${provider.itemNoun.toLowerCase()}(s).`
+      );
+    }
+  }
+
   private async benchmarkOneQuest(group: string, index: string, filePath: string): Promise<Tally> {
     const tally: Tally = { match: 0, mismatch: 0, other: 0 };
     if (!this.provider || !this.folder) return tally;
     const pythonPath = resolvePythonInterpreter(this.folder);
-    for (let part = 1; part <= this.provider.maxPart; part++) {
+    const timeoutSeconds = resolveSolverTimeoutSeconds(this.folder);
+    const max = maxPartFor(this.provider, { group, index, part: 1 });
+    for (let part = 1; part <= max; part++) {
       const ctx: PuzzleContext = { group, index, part };
       const result = canRunSolver(this.provider, ctx, filePath)
-        ? await benchmarkPart(this.provider, ctx, filePath, pythonPath, this.folder, this.extensionContext.workspaceState)
+        ? await benchmarkPart(
+            this.provider,
+            ctx,
+            filePath,
+            pythonPath,
+            timeoutSeconds,
+            this.folder,
+            this.extensionContext.workspaceState
+          )
         : ({ status: 'error', message: `${this.provider.label} has no solver() runner for this quest.` } as PartBenchmark);
       this.partResults.set(partKey(group, index, part), result);
       if (result.status === 'match') tally.match++;
@@ -306,7 +504,8 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
               inputParts,
               provider.solverInputShape,
               node.part,
-              folder.uri.fsPath
+              folder.uri.fsPath,
+              resolveSolverTimeoutSeconds(folder)
             );
             return parts[node.part - 1] ?? parts[0];
           } catch (error) {
@@ -324,6 +523,15 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     });
     if (!answer) return;
 
+    const guard = await guardSubmit(this.extensionContext.workspaceState, provider, ctx, answer);
+    if (guard === 'cancelled') return;
+    if (guard === 'skip') {
+      vscode.window.showInformationMessage(
+        `"${answer}" already matches the recorded answer for ${provider.itemNoun} ${node.index} part ${node.part} — not submitting again.`
+      );
+      return;
+    }
+
     const token = await requireToken(this.extensionContext.secrets, provider);
     if (!token) return;
     const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
@@ -332,15 +540,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     try {
       const result = await submit(ctx, token, answer, contact);
       log(`Result: ${result.status} — ${result.message}`);
-      if (result.status === 'correct' || result.status === 'already-solved') {
-        await markSolved(
-          this.extensionContext.workspaceState,
-          provider,
-          ctx,
-          node.part,
-          result.status === 'correct' ? answer : undefined
-        );
-      }
+      await recordSubmitResult(this.extensionContext.workspaceState, provider, ctx, answer, result, token, contact);
       if (result.status === 'correct' || result.status === 'already-solved') {
         vscode.window.showInformationMessage(result.message);
       } else {

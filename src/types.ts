@@ -32,6 +32,12 @@ export interface PuzzleProvider {
   tokenPrompt: string;
   /** Highest part number this site's puzzles have (used for the "next unsolved part" default). */
   maxPart: number;
+  /** Highest part number for a SPECIFIC puzzle, when it differs from maxPart (e.g. Advent
+   * of Code's last day of the event has only one part, and which day counts as "last"
+   * changed starting in 2025). Defaults to maxPart when a provider omits this — read it
+   * via core/puzzleParts.ts's maxPartFor() rather than provider.maxPart directly wherever
+   * a specific ctx is available. */
+  maxPartFor?(ctx: PuzzleContext): number;
   /** What to call one quest/day/puzzle in the tree view, e.g. "Day" -> "Day 5". */
   itemNoun: string;
   /** Human label for a ctx.group value in the tree view, e.g. "gridos-1" -> "GridOS 1".
@@ -45,6 +51,13 @@ export interface PuzzleProvider {
    * every part fetchable in one go, not just the requested one. */
   fetchInput?(ctx: PuzzleContext, token: string, contact: string): Promise<PuzzleInputParts>;
   submit?(ctx: PuzzleContext, token: string, answer: string, contact: string): Promise<SubmitResult>;
+  /** Only implemented where the site's own puzzle page displays the confirmed-correct
+   * answer for parts you've already solved (aoc: "Your puzzle answer was ..."), even when
+   * that solve happened before this extension ever recorded anything. Returns each solved
+   * part's answer text in part order (index 0 = part 1), for backfilling progress.ts
+   * without re-submitting (which would just get "already solved" back, with no answer
+   * text) or trusting whatever the current solver happens to output. */
+  fetchRecordedAnswers?(ctx: PuzzleContext, token: string, contact: string): Promise<string[]>;
   /** Set on every site: how its solver(data) wants PuzzleInputParts shaped. Presence of
    * this field is what enables the "Run solver() from this file" runner. */
   solverInputShape?: SolverInputShape;

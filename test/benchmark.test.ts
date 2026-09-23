@@ -43,7 +43,7 @@ test('match: solver output equals the recorded answer', async () => {
   writeLocalInput(folder, provider.id, ctx(), { '1': 'hello world' });
   await markSolved(state, provider, ctx(), 1, '11');
 
-  const result = await benchmarkPart(provider, ctx(), solution, 'python3', folder, state);
+  const result = await benchmarkPart(provider, ctx(), solution, 'python3', 60, folder, state);
   assert.deepEqual(result, { status: 'match', computed: '11' });
 });
 
@@ -54,7 +54,7 @@ test('mismatch: solver output differs from the recorded answer', async () => {
   writeLocalInput(folder, provider.id, ctx(), { '1': 'hello world' });
   await markSolved(state, provider, ctx(), 1, '999');
 
-  const result = await benchmarkPart(provider, ctx(), solution, 'python3', folder, state);
+  const result = await benchmarkPart(provider, ctx(), solution, 'python3', 60, folder, state);
   assert.deepEqual(result, { status: 'mismatch', computed: '11', recorded: '999' });
 });
 
@@ -64,7 +64,7 @@ test('no-reference: solver runs fine but nothing was ever recorded for this part
   const solution = writeSolution(folder, 'day_01.py', 'def solver(data):\n    return len(data)\n');
   writeLocalInput(folder, provider.id, ctx(), { '1': 'hello world' });
 
-  const result = await benchmarkPart(provider, ctx(), solution, 'python3', folder, state);
+  const result = await benchmarkPart(provider, ctx(), solution, 'python3', 60, folder, state);
   assert.deepEqual(result, { status: 'no-reference', computed: '11' });
 });
 
@@ -73,7 +73,7 @@ test('no-input: nothing cached locally — benchmarking never fetches over the n
   const state = new FakeMemento() as unknown as import('vscode').Memento;
   const solution = writeSolution(folder, 'day_01.py', 'def solver(data):\n    return len(data)\n');
 
-  const result = await benchmarkPart(provider, ctx(), solution, 'python3', folder, state);
+  const result = await benchmarkPart(provider, ctx(), solution, 'python3', 60, folder, state);
   assert.deepEqual(result, { status: 'no-input' });
 });
 
@@ -83,7 +83,7 @@ test('error: solver() raising is surfaced as an error result instead of throwing
   const solution = writeSolution(folder, 'day_01.py', 'def solver(data):\n    raise ValueError("boom")\n');
   writeLocalInput(folder, provider.id, ctx(), { '1': 'hello world' });
 
-  const result = await benchmarkPart(provider, ctx(), solution, 'python3', folder, state);
+  const result = await benchmarkPart(provider, ctx(), solution, 'python3', 60, folder, state);
   assert.equal(result.status, 'error');
 });
 
@@ -93,6 +93,6 @@ test('a provider with no solverInputShape (no runner) is reported as an error, n
   const solution = writeSolution(folder, 'day_01.py', 'def solver(data):\n    return len(data)\n');
   const noRunnerProvider = { id: 'codyssi', label: 'Codyssi', maxPart: 1 } as PuzzleProvider;
 
-  const result = await benchmarkPart(noRunnerProvider, ctx(), solution, 'python3', folder, state);
+  const result = await benchmarkPart(noRunnerProvider, ctx(), solution, 'python3', 60, folder, state);
   assert.deepEqual(result, { status: 'error', message: 'Codyssi has no solver() runner.' });
 });

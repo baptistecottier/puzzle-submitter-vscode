@@ -7,11 +7,14 @@ import { PuzzleSubmitterViewProvider } from './webview/panelProvider';
 import { PuzzleTreeProvider, TreeNode } from './tree/puzzleTreeProvider';
 import { requireToken, promptAndSaveToken, clearToken } from './core/auth';
 import { getConfiguredRunCommand, runCommandForAnswer } from './core/runCommand';
-import { resolvePythonInterpreter } from './core/pythonInterpreter';
+import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from './core/pythonInterpreter';
 import { canRunSolver, runPythonSolver } from './core/pythonRunner';
+import { maxPartFor } from './core/puzzleParts';
 import { ensureLocalInput } from './core/ensureInput';
 import { readLocalInput, siteInputPath, writeLocalInput } from './core/localInput';
-import { markSolved, nextUnsolvedPart } from './core/progress';
+import { nextUnsolvedPart } from './core/progress';
+import { guardSubmit } from './core/submitGuard';
+import { recordSubmitResult } from './core/submitRecorder';
 import { getStatusBarItem, refreshStatusBar } from './core/statusBar';
 import { getOutputChannel, log } from './core/output';
 
@@ -39,12 +42,14 @@ function activeOrFirstFolder(): vscode.WorkspaceFolder | undefined {
 }
 
 /** Lets the user accept (Enter) or override the guessed part — only asked when there's
- * more than one possible part, so single-part sites never see an extra prompt. */
-async function confirmPart(provider: PuzzleProvider, guessed: number): Promise<number | undefined> {
-  if (provider.maxPart <= 1) {
+ * more than one possible part, so single-part sites (and single-part puzzles, e.g. AoC's
+ * last day) never see an extra prompt. */
+async function confirmPart(provider: PuzzleProvider, ctx: PuzzleContext, guessed: number): Promise<number | undefined> {
+  const max = maxPartFor(provider, ctx);
+  if (max <= 1) {
     return guessed;
   }
-  const options = Array.from({ length: provider.maxPart }, (_, i) => i + 1)
+  const options = Array.from({ length: max }, (_, i) => i + 1)
     .sort((a, b) => (a === guessed ? -1 : b === guessed ? 1 : a - b))
     .map((part) => ({ label: `Part ${part}${part === guessed ? ' (guessed — press Enter to keep)' : ''}`, part }));
   const picked = await vscode.window.showQuickPick(options, { title: `${provider.label}: which part?` });
@@ -63,7 +68,7 @@ async function resolveContext(
     // this extension hasn't seen marked solved yet (it has no visibility into puzzles
     // solved outside of it), then let the user confirm or override that guess.
     const guessed = nextUnsolvedPart(workspaceState, provider, detected);
-    const confirmed = await confirmPart(provider, guessed);
+    const confirmed = await confirmPart(provider, detected, guessed);
     if (!confirmed) return undefined;
     detected.part = confirmed;
     return detected;
@@ -95,7 +100,8 @@ async function runSolverForAnswer(
     inputParts,
     provider.solverInputShape,
     ctx.part,
-    folder.uri.fsPath
+    folder.uri.fsPath,
+    resolveSolverTimeoutSeconds(folder)
   );
   return parts[ctx.part - 1] ?? parts[0];
 }
@@ -165,6 +171,13 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
     return;
   }
 
+  const guard = await guardSubmit(context.workspaceState, provider, ctx, answer);
+  if (guard === 'cancelled') return;
+  if (guard === 'skip') {
+    vscode.window.showInformationMessage(`✅ "${answer}" already matches the recorded answer — not submitting again.`);
+    return;
+  }
+
   const token = await requireToken(context.secrets, provider);
   if (!token) return;
   const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
@@ -177,10 +190,7 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
       try {
         const result = await provider.submit!(ctx, token, answer, contact);
         log(`Result: ${result.status} — ${result.message}`);
-
-        if (result.status === 'correct' || result.status === 'already-solved') {
-          await markSolved(context.workspaceState, provider, ctx, ctx.part, result.status === 'correct' ? answer : undefined);
-        }
+        await recordSubmitResult(context.workspaceState, provider, ctx, answer, result, token, contact);
 
         const icon = { correct: '✅', 'already-solved': 'ℹ️', incorrect: '❌', 'rate-limited': '⏳', unknown: '⚠️' }[
           result.status
@@ -330,12 +340,17 @@ export function activate(context: vscode.ExtensionContext): void {
       if (site) refreshAll();
     }),
     vscode.commands.registerCommand('puzzleSubmitter.tree.refresh', () => tree.refresh()),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.sync', () => tree.syncWithSite()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.benchmarkQuest', (node: TreeNode) => {
       if (node?.kind === 'quest') return tree.benchmarkQuest(node);
       return undefined;
     }),
     vscode.commands.registerCommand('puzzleSubmitter.tree.benchmarkEvent', (node: TreeNode) => {
       if (node?.kind === 'event') return tree.benchmarkEvent(node);
+      return undefined;
+    }),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.backfillEvent', (node: TreeNode) => {
+      if (node?.kind === 'event') return tree.backfillEvent(node);
       return undefined;
     }),
     vscode.commands.registerCommand('puzzleSubmitter.tree.submitPart', (node: TreeNode) => {

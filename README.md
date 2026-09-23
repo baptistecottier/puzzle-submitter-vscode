@@ -23,6 +23,12 @@ Coding Quest without leaving VS Code.
 - **Runs your solution directly** — `preprocessing()`/`solver()` from the open `.py`
   file, no wrapper script needed, matching the calling convention each site's own
   reference tooling (`aocp.py`, `ec.py`, ...) actually uses.
+- **Checks against a recorded answer before submitting**, everywhere you can submit
+  (command, panel, tree): if what you're about to submit already matches an
+  answer this extension has confirmed correct, it's not sent again — the site would just
+  say "already solved" without telling you anything new. If it *contradicts* a confirmed
+  answer, you're asked to confirm before spending a submission attempt on what's very
+  likely a wrong answer.
 
 ## Install
 
@@ -64,6 +70,14 @@ group found in the workspace, expanding to quests, expanding to parts — built 
 scanning the workspace for `.py` files the current site's provider recognizes (there's
 no "list all my puzzles" API to build this from instead).
 
+- **Sync with Site** (toolbar button at the top of the tree) — the one-click version of
+  everything below, across *every* event in the workspace at once, not just one: fetches
+  any missing input, fetches any missing reference answers, then benchmarks — skipping
+  whatever's already cached, so re-running it later is cheap. This is what you want
+  instead of clicking "Fetch Reference Answers" and "Run All Quests" separately for every
+  year you've ever touched. Needs your session token if the site has any fetch API; sites
+  with neither (codyssi, i18n-puzzles, coding quest) just get benchmarked, across
+  everything, with no token prompt at all. Cancellable from the progress notification.
 - **Run All Parts** (on a quest) / **Run All Quests** (on an event) — a **local,
   offline benchmark**: runs `solver()` for each part and compares it against the answer
   this workspace already has recorded as correct, with no network call. It's a
@@ -75,6 +89,18 @@ no "list all my puzzles" API to build this from instead).
   always a single part: prefills the answer from the benchmark above (running the
   solver fresh if it hasn't been run yet), lets you confirm or edit it, then submits
   exactly like **Submit Answer** below.
+- **Fetch Reference Answers from Site** (right-click an event) — the benchmark can only
+  compare against an answer this extension has actually recorded, and re-submitting an
+  already-solved puzzle just gets "already solved" back, never the answer text. This
+  reads the confirmed answer straight off the site's own puzzle page instead (Advent of
+  Code shows "Your puzzle answer was ..." for parts you've already solved, even ones
+  solved outside this extension entirely) — useful for backfilling reference answers for
+  puzzles you solved before you had this extension, or before the benchmark existed.
+  AoC only for now; needs your session token, and does one page request per quest with a
+  short pause between them. You don't need to run this manually going forward, either:
+  any submit that comes back "already solved" now does this same lookup automatically,
+  so the reference answer fills in on its own the next time you happen to resubmit
+  something already solved.
 - **GridOS** quests (`gridos/gridos_NN/quest_N/...`) show up for browsing only, with no
   Run/Submit actions — see [Known limitations](#known-limitations).
 
@@ -103,6 +129,7 @@ no "list all my puzzles" API to build this from instead).
 | `puzzleSubmitter.runCommand` | workspace | Optional shell command that prints an answer to stdout, offered as an alternative to typing it. Placeholders: `${year}`, `${day}`, `${part}`, `${file}`. The **last non-empty line of stdout** is used, then shown to you to confirm/edit before it's submitted. Generic — not wired up to this project's own `aocp`/`ec.py`/etc. scripts, since those print decorated multi-line/scoreboard output rather than a bare answer; point it at a script that prints just the answer, e.g. `python3 ${file}`. |
 | `puzzleSubmitter.contact` | global | Your email or GitHub URL, sent in the `User-Agent` of Advent of Code requests. AoC's documented automation etiquette asks scripts to identify themselves this way, so the site owner can reach you if something misbehaves. |
 | `puzzleSubmitter.pythonPath` | workspace | Interpreter used by "Run solver() from this file". Left unset, this workspace's `.venv/bin/python` is used if present, else `python3` on PATH. |
+| `puzzleSubmitter.solverTimeoutSeconds` | workspace | How long a single `preprocessing()`/`solver()` run is allowed before it's killed. Default `60`. Matters most for bulk runs (Run All Quests, Sync with Site), where one hung or infinite-looping solution shouldn't be able to stall the whole run. |
 
 ## Where session tokens come from
 

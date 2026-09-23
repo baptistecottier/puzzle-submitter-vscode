@@ -19,3 +19,11 @@ export function resolvePythonInterpreter(folder: vscode.WorkspaceFolder): string
   }
   return 'python3';
 }
+
+/** How long a single preprocessing()/solver() run is allowed before it's killed — see
+ * puzzleSubmitter.solverTimeoutSeconds. Matters most for bulk operations (Run All
+ * Quests, Sync with Site), where one hung/infinite-looping solution shouldn't be able to
+ * stall the whole run for minutes. */
+export function resolveSolverTimeoutSeconds(folder: vscode.WorkspaceFolder): number {
+  return vscode.workspace.getConfiguration('puzzleSubmitter', folder).get<number>('solverTimeoutSeconds', 60);
+}

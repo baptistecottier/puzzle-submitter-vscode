@@ -23,6 +23,7 @@ export async function benchmarkPart(
   ctx: PuzzleContext,
   solutionFile: string,
   pythonPath: string,
+  timeoutSeconds: number,
   folder: vscode.WorkspaceFolder,
   workspaceState: vscode.Memento
 ): Promise<PartBenchmark> {
@@ -41,7 +42,8 @@ export async function benchmarkPart(
       inputParts,
       provider.solverInputShape,
       ctx.part,
-      folder.uri.fsPath
+      folder.uri.fsPath,
+      timeoutSeconds
     );
     const computed = parts[ctx.part - 1] ?? parts[0] ?? '';
     const recorded = getRecordedAnswer(workspaceState, provider, ctx, ctx.part);
