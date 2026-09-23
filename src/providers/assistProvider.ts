@@ -1,5 +1,4 @@
 import { PuzzleProvider, SiteId } from '../types';
-import { readJsonParts, resolveLocalInputPath, writeJsonParts } from '../core/localInput';
 
 /**
  * Shared shape for sites with no known submission API: no fetchInput/submit, just
@@ -28,16 +27,6 @@ function createAssistProvider(config: {
       return { group: config.group(match), index: config.index(match), part: 1 };
     },
     puzzleUrl: config.puzzleUrl,
-    localInputPath(ctx) {
-      const segments = ['.puzzle-submitter', config.id, ctx.group, `${ctx.index}.json`].filter(Boolean);
-      return segments.join('/');
-    },
-    readLocalInput(ctx, folder) {
-      return readJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)));
-    },
-    writeLocalInput(ctx, folder, parts) {
-      writeJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)), parts);
-    },
   };
 }
 

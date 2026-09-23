@@ -1,6 +1,5 @@
 import * as crypto from 'node:crypto';
 import { PuzzleContext, PuzzleInputParts, PuzzleProvider, SubmitResult } from '../types';
-import { readJsonParts, resolveLocalInputPath, writeJsonParts } from '../core/localInput';
 
 // Detection + the fetch/decrypt pipeline below are ported from this project's own
 // working scripts/get_cases.py (everybodycodes repo) — that script is the source of
@@ -120,23 +119,6 @@ export const everybodyCodesProvider: PuzzleProvider = {
   puzzleUrl(ctx) {
     // Confirmed base pattern only (event's quest list) — not deep-linked to a specific quest.
     return `https://everybody.codes/event/${ctx.group}/quests`;
-  },
-
-  localInputPath(ctx) {
-    // Deliberately outside src/everybodycodes/events/**/inputs/inputs_NN.json: that file is
-    // ec.py's own multi-case store (keyed by case id, e.g. "41" for the personal input) and
-    // merging into it correctly isn't worth the risk of corrupting existing recorded cases.
-    // One file per quest (all parts together), matching ec.py's solver(data: dict) convention.
-    const quest = ctx.index.padStart(2, '0');
-    return `.puzzle-submitter/everybodycodes/${ctx.group}/quest_${quest}.json`;
-  },
-
-  readLocalInput(ctx, folder) {
-    return readJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)));
-  },
-
-  writeLocalInput(ctx, folder, parts) {
-    writeJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)), parts);
   },
 
   async fetchInput(ctx, token) {

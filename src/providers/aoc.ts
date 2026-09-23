@@ -1,5 +1,4 @@
 import { PuzzleContext, PuzzleProvider, SubmitResult } from '../types';
-import { readJsonParts, resolveLocalInputPath, writeJsonParts } from '../core/localInput';
 
 const DETECT_RE = /events\/year_(\d{4})\/day_(\d{2})\//;
 
@@ -68,22 +67,6 @@ export const aocProvider: PuzzleProvider = {
 
   puzzleUrl(ctx: PuzzleContext) {
     return `https://adventofcode.com/${ctx.group}/day/${ctx.index}`;
-  },
-
-  localInputPath(ctx: PuzzleContext) {
-    // Same filename pythonfw/aocp.py's save_input_to_file writes, so aocp picks up the
-    // same file — its content is now JSON ({"1": ..., "2": ...}), see aocp.py's
-    // matching _read_local_input/save_input_to_file update.
-    const day = ctx.index.padStart(2, '0');
-    return `events/year_${ctx.group}/day_${day}/day_${day}.input`;
-  },
-
-  readLocalInput(ctx, folder) {
-    return readJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)));
-  },
-
-  writeLocalInput(ctx, folder, parts) {
-    writeJsonParts(resolveLocalInputPath(folder, this.localInputPath(ctx)), parts);
   },
 
   async fetchInput(ctx, token, contact) {

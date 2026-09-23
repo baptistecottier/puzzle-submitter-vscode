@@ -1,4 +1,3 @@
-import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { PuzzleContext, PuzzleProvider } from './types';
 import { providers } from './providers';
@@ -10,6 +9,7 @@ import { getConfiguredRunCommand, runCommandForAnswer } from './core/runCommand'
 import { resolvePythonInterpreter } from './core/pythonInterpreter';
 import { runPythonSolver } from './core/pythonRunner';
 import { ensureLocalInput } from './core/ensureInput';
+import { readLocalInput, siteInputPath, writeLocalInput } from './core/localInput';
 import { markSolved, nextUnsolvedPart } from './core/progress';
 import { getStatusBarItem, refreshStatusBar } from './core/statusBar';
 import { getOutputChannel, log } from './core/output';
@@ -82,9 +82,7 @@ async function runSolverForAnswer(
   if (!inputParts?.[String(ctx.part)]) {
     const suggestion = provider.fetchInput ? "auto-fetch didn't get this part" : 'run "Set Input" first';
     vscode.window.showErrorMessage(
-      `Puzzle Submitter: no local input for this puzzle at ${vscode.workspace.asRelativePath(
-        path.join(folder.uri.fsPath, provider.localInputPath(ctx))
-      )} — ${suggestion}.`
+      `Puzzle Submitter: no local input for this puzzle in ${siteInputPath(provider.id)} — ${suggestion}.`
     );
     return undefined;
   }
@@ -219,11 +217,9 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
   const ctx = await resolveContext(provider, editor, context.workspaceState);
   if (!ctx) return;
 
-  const targetPath = path.join(folder.uri.fsPath, provider.localInputPath(ctx));
-  const existing = provider.readLocalInput(ctx, folder);
-  if (existing && existing[String(ctx.part)]) {
-    vscode.window.showInformationMessage(`Input already cached at ${vscode.workspace.asRelativePath(targetPath)} — not re-downloading.`);
-    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(targetPath));
+  const existing = readLocalInput(folder, provider.id, ctx);
+  if (existing?.[String(ctx.part)]) {
+    vscode.window.showInformationMessage(`Input already cached in ${siteInputPath(provider.id)} — not re-downloading.`);
     return;
   }
 
@@ -236,9 +232,9 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
     async () => {
       try {
         const parts = await provider.fetchInput!(ctx, token, contact);
-        provider.writeLocalInput(ctx, folder, parts);
-        log(`Saved input to ${targetPath}`);
-        await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(targetPath));
+        writeLocalInput(folder, provider.id, ctx, parts);
+        log(`Saved input to ${siteInputPath(provider.id)}`);
+        vscode.window.showInformationMessage(`Puzzle Submitter: input saved to ${siteInputPath(provider.id)}.`);
         void panelProvider?.refresh();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -274,10 +270,9 @@ async function setInputCommand(context: vscode.ExtensionContext): Promise<void> 
   );
   if (confirmed !== 'Save') return;
 
-  provider.writeLocalInput(ctx, folder, { [String(ctx.part)]: clipboard.replace(/\n$/, '') });
-  const targetPath = path.join(folder.uri.fsPath, provider.localInputPath(ctx));
-  log(`Saved input to ${targetPath} (from clipboard)`);
-  vscode.window.showInformationMessage(`Puzzle Submitter: input saved to ${vscode.workspace.asRelativePath(targetPath)}.`);
+  writeLocalInput(folder, provider.id, ctx, { [String(ctx.part)]: clipboard.replace(/\n$/, '') });
+  log(`Saved input to ${siteInputPath(provider.id)} (from clipboard)`);
+  vscode.window.showInformationMessage(`Puzzle Submitter: input saved to ${siteInputPath(provider.id)}.`);
   void panelProvider?.refresh();
 }
 

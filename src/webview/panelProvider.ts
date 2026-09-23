@@ -9,13 +9,19 @@ import { runPythonSolver } from '../core/pythonRunner';
 import { markSolved, nextUnsolvedPart, listSolvedPuzzles, SolvedPuzzle } from '../core/progress';
 import { promptManualContext } from '../core/manualContext';
 import { ensureLocalInput } from '../core/ensureInput';
+import { readLocalInput, siteInputPath, writeLocalInput } from '../core/localInput';
 import { log } from '../core/output';
 import { getWebviewHtml } from './panelHtml';
+
+const INPUT_PREVIEW_LIMIT = 2000;
 
 interface PanelState {
   site?: { id: string; label: string };
   context?: { group: string; index: string; part: number; maxPart: number };
   inputCached: boolean;
+  /** The active part's cached text, truncated to INPUT_PREVIEW_LIMIT chars — only this
+   * puzzle's input, never the rest of the site's consolidated store. */
+  inputPreview?: { text: string; fullLength: number; truncated: boolean };
   hasToken: boolean;
   supportsSubmit: boolean;
   supportsFetch: boolean;
@@ -33,6 +39,7 @@ type WebviewMessage =
   | { type: 'openSite' }
   | { type: 'fetchInput' }
   | { type: 'setInputFromClipboard' }
+  | { type: 'openInputInEditor' }
   | { type: 'runSolver' }
   | { type: 'runCommand' }
   | { type: 'setToken' }
@@ -113,7 +120,8 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
     const folder = this.currentFolder();
     if (!this.provider || !folder) return emptyState;
 
-    const inputParts = this.ctx ? this.provider.readLocalInput(this.ctx, folder) : undefined;
+    const inputParts = this.ctx ? readLocalInput(folder, this.provider.id, this.ctx) : undefined;
+    const currentPartText = this.ctx ? inputParts?.[String(this.ctx.part)] : undefined;
     const hasToken = this.provider.submit ? Boolean(await getToken(this.extensionContext.secrets, this.provider)) : false;
     const supportsSolver = Boolean(this.provider.solverInputShape) && Boolean(editor?.document.uri.fsPath.endsWith('.py'));
 
@@ -122,7 +130,14 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       context: this.ctx
         ? { group: this.ctx.group, index: this.ctx.index, part: this.ctx.part, maxPart: this.provider.maxPart }
         : undefined,
-      inputCached: Boolean(this.ctx && inputParts?.[String(this.ctx.part)]),
+      inputCached: Boolean(currentPartText),
+      inputPreview: currentPartText
+        ? {
+            text: currentPartText.slice(0, INPUT_PREVIEW_LIMIT),
+            fullLength: currentPartText.length,
+            truncated: currentPartText.length > INPUT_PREVIEW_LIMIT,
+          }
+        : undefined,
       hasToken,
       supportsSubmit: Boolean(this.provider.submit),
       supportsFetch: Boolean(this.provider.fetchInput),
@@ -166,6 +181,8 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
         return this.fetchInput();
       case 'setInputFromClipboard':
         return this.setInputFromClipboard();
+      case 'openInputInEditor':
+        return this.openInputInEditor();
       case 'runSolver':
         return this.runSolver();
       case 'runCommand':
@@ -196,8 +213,8 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
     const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
     try {
       const parts = await this.provider.fetchInput(this.ctx, token, contact);
-      this.provider.writeLocalInput(this.ctx, folder, parts);
-      log(`Saved input to ${this.provider.localInputPath(this.ctx)} (from panel)`);
+      writeLocalInput(folder, this.provider.id, this.ctx, parts);
+      log(`Saved input to ${siteInputPath(this.provider.id)} (from panel)`);
     } catch (error) {
       vscode.window.showErrorMessage(`Puzzle Submitter: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -213,8 +230,21 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       vscode.window.showErrorMessage('Puzzle Submitter: clipboard is empty — copy the puzzle input first.');
       return;
     }
-    this.provider.writeLocalInput(this.ctx, folder, { [String(this.ctx.part)]: clipboard.replace(/\n$/, '') });
+    writeLocalInput(folder, this.provider.id, this.ctx, { [String(this.ctx.part)]: clipboard.replace(/\n$/, '') });
     await this.postState();
+  }
+
+  /** Opens the active puzzle's full (untruncated) cached input as an untitled tab — for
+   * inputs too big for the panel's inline preview. Never touches the site's JSON file on
+   * disk, just shows its content for this one puzzle. */
+  private async openInputInEditor(): Promise<void> {
+    if (!this.provider || !this.ctx) return;
+    const folder = this.currentFolder();
+    if (!folder) return;
+    const text = readLocalInput(folder, this.provider.id, this.ctx)?.[String(this.ctx.part)];
+    if (!text) return;
+    const doc = await vscode.workspace.openTextDocument({ content: text, language: 'plaintext' });
+    await vscode.window.showTextDocument(doc, { preview: false });
   }
 
   private async runSolver(): Promise<void> {

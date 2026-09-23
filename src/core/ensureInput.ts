@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { PuzzleContext, PuzzleInputParts, PuzzleProvider } from '../types';
 import { requireToken } from './auth';
+import { readLocalInput, siteInputPath, writeLocalInput } from './localInput';
 import { log } from './output';
 
 /**
@@ -16,7 +17,7 @@ export async function ensureLocalInput(
   folder: vscode.WorkspaceFolder,
   secrets: vscode.SecretStorage
 ): Promise<PuzzleInputParts | undefined> {
-  const existing = provider.readLocalInput(ctx, folder);
+  const existing = readLocalInput(folder, provider.id, ctx);
   if (existing?.[String(ctx.part)]) return existing;
 
   if (!provider.fetchInput) return existing;
@@ -27,13 +28,13 @@ export async function ensureLocalInput(
   const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
   try {
     const fetched = await provider.fetchInput(ctx, token, contact);
-    provider.writeLocalInput(ctx, folder, fetched);
-    log(`Saved input to ${provider.localInputPath(ctx)} (auto-fetched before running solver)`);
+    writeLocalInput(folder, provider.id, ctx, fetched);
+    log(`Saved input to ${siteInputPath(provider.id)} (auto-fetched before running solver)`);
   } catch (error) {
     vscode.window.showErrorMessage(
       `Puzzle Submitter: couldn't auto-fetch input: ${error instanceof Error ? error.message : String(error)}`
     );
     return existing;
   }
-  return provider.readLocalInput(ctx, folder);
+  return readLocalInput(folder, provider.id, ctx);
 }

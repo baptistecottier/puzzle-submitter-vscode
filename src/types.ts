@@ -1,5 +1,3 @@
-import * as vscode from 'vscode';
-
 export type SiteId = 'aoc' | 'everybodycodes' | 'codyssi' | 'i18n-puzzles' | 'codingquest';
 
 export interface PuzzleContext {
@@ -42,12 +40,6 @@ export interface PuzzleProvider {
    * every part fetchable in one go, not just the requested one. */
   fetchInput?(ctx: PuzzleContext, token: string, contact: string): Promise<PuzzleInputParts>;
   submit?(ctx: PuzzleContext, token: string, answer: string, contact: string): Promise<SubmitResult>;
-  /** Workspace-relative path this puzzle's local input is cached at. */
-  localInputPath(ctx: PuzzleContext): string;
-  /** Reads whatever's cached locally for this puzzle, if anything. */
-  readLocalInput(ctx: PuzzleContext, folder: vscode.WorkspaceFolder): PuzzleInputParts | undefined;
-  /** Merges `parts` into whatever's already cached (doesn't drop other parts already saved). */
-  writeLocalInput(ctx: PuzzleContext, folder: vscode.WorkspaceFolder, parts: PuzzleInputParts): void;
   /** Set on every site: how its solver(data) wants PuzzleInputParts shaped. Presence of
    * this field is what enables the "Run solver() from this file" runner. */
   solverInputShape?: SolverInputShape;

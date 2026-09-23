@@ -90,6 +90,19 @@ export function getWebviewHtml(): string {
   .progress-item { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
   .progress-item .stars { color: var(--vscode-descriptionForeground); }
   a.link { color: var(--vscode-textLink-foreground); cursor: pointer; }
+  .input-preview {
+    margin: 6px 0 0;
+    padding: 6px 8px;
+    max-height: 140px;
+    overflow: auto;
+    background: var(--vscode-textCodeBlock-background, var(--vscode-input-background));
+    border-radius: 2px;
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .input-preview-note { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -173,6 +186,20 @@ function render() {
   }
   inputButtons.appendChild(el('button', { onclick: () => post({ type: 'setInputFromClipboard' }), text: 'Set from Clipboard' }));
   card.appendChild(inputButtons);
+
+  if (state.inputPreview) {
+    const pre = el('pre', { class: 'input-preview' });
+    pre.textContent = state.inputPreview.text;
+    card.appendChild(pre);
+    if (state.inputPreview.truncated) {
+      card.appendChild(el('div', { class: 'input-preview-note' }, [
+        document.createTextNode(
+          'Showing first ' + state.inputPreview.text.length + ' of ' + state.inputPreview.fullLength + ' characters. '
+        ),
+        el('a', { class: 'link', onclick: () => post({ type: 'openInputInEditor' }), text: 'Open full input in a tab' }),
+      ]));
+    }
+  }
 
   card.appendChild(el('h2', { text: 'Answer' }));
   const textarea = el('textarea', {
