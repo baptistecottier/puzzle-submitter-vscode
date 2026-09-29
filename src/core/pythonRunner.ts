@@ -37,6 +37,11 @@ sys.path.insert(0, os.getcwd())
 
 spec = importlib.util.spec_from_file_location("puzzle_submitter_solution", solution_path)
 module = importlib.util.module_from_spec(spec)
+# Must be registered in sys.modules before exec_module — @dataclass (and anything else
+# that resolves type hints via sys.modules[cls.__module__]) fails with
+# "AttributeError: 'NoneType' object has no attribute '__dict__'" without this, since
+# module_from_spec() alone never adds the module there.
+sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 with open(parts_path, encoding="utf-8") as f:
@@ -72,11 +77,18 @@ print(marker + json.dumps([str(p) for p in result_parts]))
 
 export interface PythonRunResult {
   parts: string[];
+  /** Everything the solution printed (preprocessing()/solver()'s own print() calls),
+   * with the result-marker line stripped out — callers that don't care (the normal
+   * "fill in the answer" flow) can just ignore it. */
+  output: string;
 }
 
 /** Runs preprocessing()/solver() from a Python solution file against locally-cached input.
  * Killed after timeoutSeconds if it hasn't finished — see puzzleSubmitter.solverTimeoutSeconds,
- * which callers resolve and pass in (this file stays vscode-free so it's plain-Node testable). */
+ * which callers resolve and pass in (this file stays vscode-free so it's plain-Node testable).
+ * `onSpawn`, if given, is called synchronously with a `kill()` function once the process
+ * exists — lets a caller (a Cancel button, a cancellation token) end the run early, distinct
+ * from the timeout's own kill (see the "cancelled" vs "timed out" messages below). */
 export function runPythonSolver(
   pythonPath: string,
   solutionFile: string,
@@ -84,7 +96,8 @@ export function runPythonSolver(
   shape: SolverInputShape,
   targetPart: number,
   cwd: string,
-  timeoutSeconds: number
+  timeoutSeconds: number,
+  onSpawn?: (kill: () => void) => void
 ): Promise<PythonRunResult> {
   return new Promise((resolve, reject) => {
     const tag = `${Date.now()}-${process.pid}`;
@@ -98,12 +111,17 @@ export function runPythonSolver(
       fs.unlink(partsPath, () => {});
     };
 
-    cp.execFile(
+    let cancelled = false;
+    const child = cp.execFile(
       pythonPath,
       [bootstrapPath, solutionFile, partsPath, shape, String(targetPart), MARKER],
       { cwd, timeout: timeoutSeconds * 1000, maxBuffer: 10 * 1024 * 1024 },
       (error, stdout, stderr) => {
         cleanup();
+        if (cancelled) {
+          reject(new Error('Solver run cancelled.'));
+          return;
+        }
         if (error?.killed && error.signal) {
           reject(new Error(`Solver timed out after ${timeoutSeconds}s (puzzleSubmitter.solverTimeoutSeconds) — killed.`));
           return;
@@ -112,18 +130,24 @@ export function runPythonSolver(
           reject(new Error(`Solver failed (${pythonPath}): ${error.message}${stderr ? `\n${stderr.trim()}` : ''}`));
           return;
         }
-        const line = stdout.split('\n').find((l) => l.startsWith(MARKER));
-        if (!line) {
+        const lines = stdout.split('\n');
+        const markerIndex = lines.findIndex((l) => l.startsWith(MARKER));
+        if (markerIndex === -1) {
           reject(new Error(`Solver ran but printed no result.\n${(stdout + stderr).trim()}`));
           return;
         }
+        const output = lines.filter((_, i) => i !== markerIndex).join('\n').trim();
         try {
-          const parts = JSON.parse(line.slice(MARKER.length)) as string[];
-          resolve({ parts });
+          const parts = JSON.parse(lines[markerIndex].slice(MARKER.length)) as string[];
+          resolve({ parts, output });
         } catch {
-          reject(new Error(`Could not parse solver result: ${line}`));
+          reject(new Error(`Could not parse solver result: ${lines[markerIndex]}`));
         }
       }
     );
+    onSpawn?.(() => {
+      cancelled = true;
+      child.kill();
+    });
   });
 }

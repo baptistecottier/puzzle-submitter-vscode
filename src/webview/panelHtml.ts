@@ -7,6 +7,7 @@ export function getWebviewHtml(): string {
   body {
     font-family: var(--vscode-font-family);
     font-size: var(--vscode-font-size);
+    line-height: 1.4;
     color: var(--vscode-foreground);
     padding: 0 12px 16px;
   }
@@ -24,18 +25,26 @@ export function getWebviewHtml(): string {
     padding: 10px;
   }
   .puzzle-title {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
+    line-height: 1.3;
     cursor: pointer;
   }
   .puzzle-title:hover { text-decoration: underline; }
   .site-label {
     font-size: 11px;
+    line-height: 1.4;
     color: var(--vscode-descriptionForeground);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
+  .field-label {
+    line-height: 1.4;
+    color: var(--vscode-descriptionForeground);
+  }
   .row { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .title-row { margin-top: 2px; }
+  .row-divider { width: 1px; align-self: stretch; background: var(--vscode-widget-border, var(--vscode-panel-border)); }
   select, textarea, input[type=text] {
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
@@ -87,8 +96,6 @@ export function getWebviewHtml(): string {
     color: var(--vscode-descriptionForeground);
     font-size: 12px;
   }
-  .progress-item { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
-  .progress-item .stars { color: var(--vscode-descriptionForeground); }
   a.link { color: var(--vscode-textLink-foreground); cursor: pointer; }
   .input-preview {
     margin: 6px 0 0;
@@ -103,6 +110,30 @@ export function getWebviewHtml(): string {
     word-break: break-all;
   }
   .input-preview-note { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
+  .split-button { position: relative; display: inline-flex; }
+  .split-button button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .split-arrow {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+    padding: 4px 5px;
+    display: flex;
+    align-items: center;
+  }
+  .split-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 10;
+    margin-top: 2px;
+    background: var(--vscode-dropdown-background, var(--vscode-editorWidget-background));
+    border: 1px solid var(--vscode-dropdown-border, var(--vscode-widget-border));
+    border-radius: 2px;
+    white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  }
+  .split-menu-item { padding: 6px 10px; cursor: pointer; }
+  .split-menu-item:hover { background: var(--vscode-list-hoverBackground); }
 </style>
 </head>
 <body>
@@ -111,6 +142,7 @@ export function getWebviewHtml(): string {
 const vscode = acquireVsCodeApi();
 let state = { progress: [] };
 let draftAnswer = '';
+let solverMenuOpen = false;
 
 function el(tag, props, children) {
   const node = document.createElement(tag);
@@ -148,19 +180,18 @@ function render() {
     ]));
     card.appendChild(el('button', { onclick: () => post({ type: 'pickManually' }), text: 'Pick manually' }));
     root.appendChild(card);
-    renderProgress(root);
     return;
   }
 
   const title = [state.context.group, state.context.index].filter(Boolean).join(' · ');
-  card.appendChild(el('div', {
+  const titleRow = el('div', { class: 'row title-row' });
+  titleRow.appendChild(el('span', {
     class: 'puzzle-title',
     onclick: () => post({ type: 'openSite' }),
     text: title,
   }));
-
-  const partRow = el('div', { class: 'row' });
-  partRow.appendChild(el('span', { text: 'Part' }));
+  titleRow.appendChild(el('span', { class: 'row-divider' }));
+  titleRow.appendChild(el('span', { class: 'field-label', text: 'Part' }));
   if (state.context.maxPart > 1) {
     const select = el('select', {
       onchange: (e) => post({ type: 'setPart', part: Number(e.target.value) }),
@@ -168,11 +199,11 @@ function render() {
     for (let p = 1; p <= state.context.maxPart; p++) {
       select.appendChild(el('option', { value: String(p), ...(p === state.context.part ? { selected: 'selected' } : {}), text: String(p) }));
     }
-    partRow.appendChild(select);
+    titleRow.appendChild(select);
   } else {
-    partRow.appendChild(el('span', { text: String(state.context.part) }));
+    titleRow.appendChild(el('span', { text: String(state.context.part) }));
   }
-  card.appendChild(partRow);
+  card.appendChild(titleRow);
 
   const inputRow = el('div', { class: 'status-line', style: 'margin-top:10px' }, [
     el('span', { class: 'dot ' + (state.inputCached ? 'ok' : 'missing') }),
@@ -210,8 +241,29 @@ function render() {
   card.appendChild(textarea);
 
   const runButtons = el('div', { class: 'row' });
-  if (state.supportsSolver) {
-    runButtons.appendChild(el('button', { onclick: () => post({ type: 'runSolver' }), text: 'Run solver()' }));
+  if (state.solverRunning) {
+    runButtons.appendChild(el('button', { onclick: () => post({ type: 'cancelSolver' }), text: 'Running solver… Cancel' }));
+  } else if (state.supportsSolver) {
+    const arrowButton = el('button', {
+      class: 'split-arrow',
+      'aria-label': 'More run options',
+      onclick: (e) => { e.stopPropagation(); solverMenuOpen = !solverMenuOpen; render(); },
+    });
+    arrowButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M7.976 10.072l4.357-4.357.618.62L8.284 11h-.618L3 6.333l.619-.618 4.357 4.357z"/></svg>';
+    const splitButton = el('div', { class: 'split-button' }, [
+      el('button', { onclick: () => post({ type: 'runSolver' }), text: 'Run Python solver' }),
+      arrowButton,
+    ]);
+    if (solverMenuOpen) {
+      splitButton.appendChild(el('div', { class: 'split-menu' }, [
+        el('div', {
+          class: 'split-menu-item',
+          onclick: () => { solverMenuOpen = false; post({ type: 'runSolver', withPrints: true }); },
+          text: 'Run Python solver with prints',
+        }),
+      ]));
+    }
+    runButtons.appendChild(splitButton);
   }
   if (state.hasRunCommand) {
     runButtons.appendChild(el('button', { onclick: () => post({ type: 'runCommand' }), text: 'Run configured command' }));
@@ -246,32 +298,23 @@ function render() {
   }
 
   root.appendChild(card);
-  renderProgress(root);
-}
-
-function renderProgress(root) {
-  root.appendChild(el('h2', { text: 'Solved in this workspace' }));
-  if (!state.progress || state.progress.length === 0) {
-    root.appendChild(el('div', { class: 'empty', text: 'Nothing marked solved yet.' }));
-    return;
-  }
-  // One line per event/story, not per day — years of puzzles would otherwise push this
-  // list far past what fits in a sidebar. Per-day detail lives in the Puzzles tree.
-  for (const g of state.progress) {
-    root.appendChild(el('div', { class: 'progress-item' }, [
-      el('span', { text: g.label }),
-      el('span', { class: 'stars', text: g.puzzles + ' · ⭐ ' + g.stars }),
-    ]));
-  }
 }
 
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (msg.type === 'state') {
     state = msg.state;
+    solverMenuOpen = false;
     render();
   } else if (msg.type === 'answerFilled') {
     draftAnswer = msg.value;
+    render();
+  }
+});
+
+document.addEventListener('click', () => {
+  if (solverMenuOpen) {
+    solverMenuOpen = false;
     render();
   }
 });

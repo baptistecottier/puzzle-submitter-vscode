@@ -35,6 +35,20 @@ function writeSiteStore(folder: vscode.WorkspaceFolder, siteId: SiteId, store: S
   fs.writeFileSync(file, JSON.stringify(store, null, 2), 'utf8');
 }
 
+/** Whether this site has any locally cached input at all in this workspace. */
+export function hasLocalInput(folder: vscode.WorkspaceFolder, siteId: SiteId): boolean {
+  return fs.existsSync(absoluteSiteInputPath(folder, siteId));
+}
+
+/** Deletes this site's entire consolidated input cache — every puzzle, not just one.
+ * Input is fetched per-account (e.g. AoC/EC personalize it), so switching to a
+ * different account's token without clearing this would keep showing the old
+ * account's input as if it belonged to the new one. */
+export function clearLocalInput(folder: vscode.WorkspaceFolder, siteId: SiteId): void {
+  const file = absoluteSiteInputPath(folder, siteId);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+}
+
 /** Whatever's cached locally for this puzzle, if anything. */
 export function readLocalInput(
   folder: vscode.WorkspaceFolder,

@@ -13,7 +13,7 @@ import { inferPathPrefix, planNewEvent, scaffoldFileContent } from '../core/puzz
 import { requireToken } from '../core/auth';
 import { getRecordedAnswer, markSolved } from '../core/progress';
 import { guardSubmit } from '../core/submitGuard';
-import { recordSubmitResult } from '../core/submitRecorder';
+import { recordSubmitResult, describeSubmitResult } from '../core/submitRecorder';
 import { log } from '../core/output';
 
 function sleep(ms: number): Promise<void> {
@@ -134,7 +134,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     if (!this.provider) return [];
 
     if (!node) {
-      return [...this.quests.keys()].sort().map((group) => ({ kind: 'event', group }) satisfies TreeNode);
+      return this.sortGroups([...this.quests.keys()]).map((group) => ({ kind: 'event', group }) satisfies TreeNode);
     }
     if (node.kind === 'event') {
       const perGroup = this.quests.get(node.group) ?? new Map<string, QuestEntry>();
@@ -156,6 +156,14 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     if (!this.provider) return group;
     if (this.provider.groupLabel) return this.provider.groupLabel(group);
     return group || '(ungrouped)';
+  }
+
+  /** Orders groups the way the provider wants (see PuzzleProvider.groupSortKey) — plain
+   * string sort otherwise, which is only correct when every group has the same shape. */
+  private sortGroups(groups: string[]): string[] {
+    const sortKey = this.provider?.groupSortKey;
+    if (!sortKey) return groups.sort();
+    return groups.sort((a, b) => sortKey(a).localeCompare(sortKey(b)));
   }
 
   private iconFor(result: PartBenchmark | undefined): vscode.ThemeIcon {
@@ -354,6 +362,12 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         jobs.push({ group, index, filePath: entry.filePath });
       }
     }
+    // this.quests iterates in whatever order the filesystem happened to hand back
+    // findFiles() results — sort into the same event-then-index order the tree itself
+    // displays (see sortGroups/groupSortKey), so progress reads predictably instead of
+    // jumping around or interleaving unrelated group categories (e.g. EC years/stories).
+    const groupKey = (g: string) => (provider.groupSortKey ? provider.groupSortKey(g) : g);
+    jobs.sort((a, b) => groupKey(a.group).localeCompare(groupKey(b.group)) || Number(a.index) - Number(b.index));
     if (jobs.length === 0) {
       vscode.window.showInformationMessage('Puzzle Submitter: no quests found in this workspace to sync.');
       return;
@@ -369,6 +383,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
     const totals: Tally = { match: 0, mismatch: 0, other: 0 };
     let aborted = false;
+    let userCancelled = false;
     let anyNetworkSucceeded = false;
 
     await vscode.window.withProgress(
@@ -381,6 +396,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         for (let i = 0; i < jobs.length; i++) {
           if (cancelToken.isCancellationRequested) {
             aborted = true;
+            userCancelled = true;
             return;
           }
           const { group, index, filePath } = jobs[i];
@@ -427,7 +443,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             }
           }
 
-          const tally = await this.benchmarkOneQuest(group, index, filePath);
+          const tally = await this.benchmarkOneQuest(group, index, filePath, cancelToken);
           totals.match += tally.match;
           totals.mismatch += tally.mismatch;
           totals.other += tally.other;
@@ -439,6 +455,10 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     if (!aborted) {
       vscode.window.showInformationMessage(
         `Sync complete: ${this.describeTally(totals)} across ${jobs.length} ${provider.itemNoun.toLowerCase()}(s).`
+      );
+    } else if (userCancelled) {
+      vscode.window.showInformationMessage(
+        `Sync cancelled — ${this.describeTally(totals)} across ${jobs.length} ${provider.itemNoun.toLowerCase()}(s) so far.`
       );
     }
   }
@@ -548,13 +568,19 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     );
   }
 
-  private async benchmarkOneQuest(group: string, index: string, filePath: string): Promise<Tally> {
+  private async benchmarkOneQuest(
+    group: string,
+    index: string,
+    filePath: string,
+    cancelToken?: vscode.CancellationToken
+  ): Promise<Tally> {
     const tally: Tally = { match: 0, mismatch: 0, other: 0 };
     if (!this.provider || !this.folder) return tally;
     const pythonPath = resolvePythonInterpreter(this.folder);
     const timeoutSeconds = resolveSolverTimeoutSeconds(this.folder);
     const max = maxPartFor(this.provider, { group, index, part: 1 });
     for (let part = 1; part <= max; part++) {
+      if (cancelToken?.isCancellationRequested) break;
       const ctx: PuzzleContext = { group, index, part };
       const result = canRunSolver(this.provider, ctx, filePath)
         ? await benchmarkPart(
@@ -564,7 +590,8 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             pythonPath,
             timeoutSeconds,
             this.folder,
-            this.extensionContext.workspaceState
+            this.extensionContext.workspaceState,
+            cancelToken
           )
         : ({ status: 'error', message: `${this.provider.label} has no solver() runner for this quest.` } as PartBenchmark);
       this.partResults.set(partKey(group, index, part), result);
@@ -648,11 +675,12 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     try {
       const result = await submit(ctx, token, answer, contact);
       log(`Result: ${result.status} — ${result.message}`);
-      await recordSubmitResult(this.extensionContext.workspaceState, provider, ctx, answer, result, token, contact);
+      const recorded = await recordSubmitResult(this.extensionContext.workspaceState, provider, ctx, answer, result, token, contact);
+      const message = describeSubmitResult(result, answer, recorded);
       if (result.status === 'correct' || result.status === 'already-solved') {
-        vscode.window.showInformationMessage(result.message);
+        vscode.window.showInformationMessage(message);
       } else {
-        vscode.window.showWarningMessage(result.message);
+        vscode.window.showWarningMessage(message);
       }
     } catch (error) {
       vscode.window.showErrorMessage(`Puzzle Submitter: ${error instanceof Error ? error.message : String(error)}`);

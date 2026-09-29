@@ -47,6 +47,22 @@ async function fetchKeys(ctx: PuzzleContext, token: string): Promise<Record<stri
   return (await response.json()) as Record<string, string>;
 }
 
+/** Pure so it can be unit tested without a network call. The same endpoint fetchKeys
+ * uses for decryption keys also carries the confirmed answer for every part already
+ * solved, as plain text (answer1/answer2/answer3, right next to key1/key2/key3) —
+ * confirmed from a real response. Unlike AoC there's no page to scrape here at all, and
+ * no risk of it being client-rendered. Stops at the first missing part, matching how
+ * parts unlock in order (there's no answer3 without answer1/answer2 already present). */
+export function parseQuestAnswers(data: Record<string, string>): string[] {
+  const answers: string[] = [];
+  for (let part = 1; part <= 3; part++) {
+    const answer = data[`answer${part}`];
+    if (typeof answer !== 'string') break;
+    answers.push(answer);
+  }
+  return answers;
+}
+
 /** AES/CBC decrypt, IV = first 16 chars of the key — exactly as get_cases.py does it. Auto-padding covers PKCS5/7. */
 function decrypt(key: string, encryptedHex: string): string {
   const keyBytes = Buffer.from(key, 'utf8');
@@ -113,6 +129,16 @@ export const everybodyCodesProvider: PuzzleProvider = {
     return /^\d{4}$/.test(group) ? group : `Story ${group}`;
   },
 
+  // A plain sort on the raw group interleaves years/stories/GridOS (e.g. story "3" falls
+  // between years "2024" and "2025", since it's a shorter numeric string) — group by
+  // category first, in the same order the site's own nav uses (Events, Stories, GridOS),
+  // then by number within each.
+  groupSortKey(group) {
+    if (group.startsWith('gridos-')) return `2_${group.slice('gridos-'.length).padStart(6, '0')}`;
+    if (/^\d{4}$/.test(group)) return `0_${group}`;
+    return `1_${group.padStart(6, '0')}`;
+  },
+
   detect(relativeFilePath) {
     const event = EVENTS_RE.exec(relativeFilePath);
     if (event) {
@@ -174,6 +200,10 @@ export const everybodyCodesProvider: PuzzleProvider = {
       throw new Error(`No input/key found for quest ${ctx.index} — it may not be unlocked yet.`);
     }
     return parts;
+  },
+
+  async fetchRecordedAnswers(ctx, token) {
+    return parseQuestAnswers(await fetchKeys(ctx, token));
   },
 
   async submit(ctx, token, answer) {

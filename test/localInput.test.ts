@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { readLocalInput, siteInputPath, writeLocalInput } from '../src/core/localInput';
+import { readLocalInput, siteInputPath, writeLocalInput, hasLocalInput, clearLocalInput } from '../src/core/localInput';
 import { PuzzleContext, SiteId } from '../src/types';
 
 function tmpFolder(): import('vscode').WorkspaceFolder {
@@ -64,4 +64,39 @@ test('a corrupt site file reads as undefined instead of throwing', () => {
 test('siteInputPath is one file per site, not per puzzle', () => {
   assert.equal(siteInputPath('aoc'), '.puzzle-submitter/aoc.json');
   assert.equal(siteInputPath('everybodycodes'), '.puzzle-submitter/everybodycodes.json');
+});
+
+test('hasLocalInput is false before anything is cached, true after', () => {
+  const folder = tmpFolder();
+  assert.equal(hasLocalInput(folder, 'aoc'), false);
+  writeLocalInput(folder, 'aoc', ctx(), { '1': 'input' });
+  assert.equal(hasLocalInput(folder, 'aoc'), true);
+});
+
+test('clearLocalInput removes every puzzle cached for a site, not just one', () => {
+  const folder = tmpFolder();
+  writeLocalInput(folder, 'aoc', ctx({ group: '2024', index: '1' }), { '1': 'day one' });
+  writeLocalInput(folder, 'aoc', ctx({ group: '2024', index: '2' }), { '1': 'day two' });
+
+  clearLocalInput(folder, 'aoc');
+
+  assert.equal(hasLocalInput(folder, 'aoc'), false);
+  assert.equal(readLocalInput(folder, 'aoc', ctx({ group: '2024', index: '1' })), undefined);
+  assert.equal(readLocalInput(folder, 'aoc', ctx({ group: '2024', index: '2' })), undefined);
+});
+
+test('clearLocalInput never touches a different site', () => {
+  const folder = tmpFolder();
+  writeLocalInput(folder, 'aoc', ctx(), { '1': 'aoc input' });
+  writeLocalInput(folder, 'codyssi', ctx(), { '1': 'codyssi input' });
+
+  clearLocalInput(folder, 'aoc');
+
+  assert.equal(hasLocalInput(folder, 'aoc'), false);
+  assert.deepEqual(readLocalInput(folder, 'codyssi', ctx()), { '1': 'codyssi input' });
+});
+
+test('clearLocalInput on a site with nothing cached does not throw', () => {
+  const folder = tmpFolder();
+  assert.doesNotThrow(() => clearLocalInput(folder, 'aoc'));
 });

@@ -3,17 +3,18 @@ import { PuzzleContext, PuzzleProvider } from '../types';
 import { providers } from '../providers';
 import { peekSite, promptAndSaveSite } from '../core/siteResolver';
 import { getToken, requireToken, promptAndSaveToken, clearToken } from '../core/auth';
+import { offerToClearStaleData } from '../core/accountSwitch';
 import { getConfiguredRunCommand, runCommandForAnswer } from '../core/runCommand';
 import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from '../core/pythonInterpreter';
 import { canRunSolver, runPythonSolver } from '../core/pythonRunner';
 import { maxPartFor } from '../core/puzzleParts';
-import { nextUnsolvedPart, summarizeSolvedByGroup, SolvedGroupSummary } from '../core/progress';
+import { nextUnsolvedPart } from '../core/progress';
 import { guardSubmit } from '../core/submitGuard';
-import { recordSubmitResult } from '../core/submitRecorder';
+import { recordSubmitResult, describeSubmitResult } from '../core/submitRecorder';
 import { promptManualContext } from '../core/manualContext';
 import { ensureLocalInput } from '../core/ensureInput';
 import { readLocalInput, siteInputPath, writeLocalInput } from '../core/localInput';
-import { log } from '../core/output';
+import { getOutputChannel, log } from '../core/output';
 import { getWebviewHtml } from './panelHtml';
 
 const INPUT_PREVIEW_LIMIT = 2000;
@@ -29,8 +30,8 @@ interface PanelState {
   supportsSubmit: boolean;
   supportsFetch: boolean;
   supportsSolver: boolean;
+  solverRunning: boolean;
   hasRunCommand: boolean;
-  progress: SolvedGroupSummary[];
   lastResult?: { status: string; message: string };
 }
 
@@ -43,7 +44,8 @@ type WebviewMessage =
   | { type: 'fetchInput' }
   | { type: 'setInputFromClipboard' }
   | { type: 'openInputInEditor' }
-  | { type: 'runSolver' }
+  | { type: 'runSolver'; withPrints?: boolean }
+  | { type: 'cancelSolver' }
   | { type: 'runCommand' }
   | { type: 'setToken' }
   | { type: 'clearToken' }
@@ -58,6 +60,9 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
   private ctx: PuzzleContext | undefined;
   private provider: PuzzleProvider | undefined;
   private lastResult: { status: string; message: string } | undefined;
+  private solverRunning = false;
+  private solverKill: (() => void) | undefined;
+  private solverCancelRequested = false;
 
   constructor(private readonly extensionContext: vscode.ExtensionContext) {}
 
@@ -111,12 +116,12 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
 
   private async buildState(): Promise<PanelState> {
     const emptyState: PanelState = {
-      progress: [],
       inputCached: false,
       hasToken: false,
       supportsSubmit: false,
       supportsFetch: false,
       supportsSolver: false,
+      solverRunning: false,
       hasRunCommand: false,
     };
     const editor = vscode.window.activeTextEditor;
@@ -145,8 +150,8 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       supportsSubmit: Boolean(this.provider.submit),
       supportsFetch: Boolean(this.provider.fetchInput),
       supportsSolver,
+      solverRunning: this.solverRunning,
       hasRunCommand: Boolean(getConfiguredRunCommand(folder)),
-      progress: summarizeSolvedByGroup(this.extensionContext.workspaceState, this.provider),
       lastResult: this.lastResult,
     };
   }
@@ -187,12 +192,18 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       case 'openInputInEditor':
         return this.openInputInEditor();
       case 'runSolver':
-        return this.runSolver();
+        return this.runSolver(msg.withPrints ?? false);
+      case 'cancelSolver':
+        if (this.solverKill) this.solverKill();
+        else this.solverCancelRequested = true;
+        return;
       case 'runCommand':
         return this.runConfiguredCommand();
       case 'setToken':
         if (this.provider) {
-          await promptAndSaveToken(this.extensionContext.secrets, this.provider);
+          const token = await promptAndSaveToken(this.extensionContext.secrets, this.provider);
+          const folder = this.currentFolder();
+          if (token && folder) await offerToClearStaleData(folder, this.provider, this.extensionContext.workspaceState);
           await this.postState();
         }
         return;
@@ -250,7 +261,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
     await vscode.window.showTextDocument(doc, { preview: false });
   }
 
-  private async runSolver(): Promise<void> {
+  private async runSolver(withPrints: boolean): Promise<void> {
     if (!this.view || !this.provider?.solverInputShape || !this.ctx) return;
     const editor = vscode.window.activeTextEditor;
     const folder = this.currentFolder();
@@ -263,20 +274,45 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       await this.postState();
       return;
     }
+    this.solverRunning = true;
+    this.solverCancelRequested = false;
+    await this.postState(); // shows the Cancel button before the run actually starts
     try {
       const pythonPath = resolvePythonInterpreter(folder);
-      const { parts } = await runPythonSolver(
+      const { parts, output } = await runPythonSolver(
         pythonPath,
         editor.document.uri.fsPath,
         inputParts,
         this.provider.solverInputShape,
         this.ctx.part,
         folder.uri.fsPath,
-        resolveSolverTimeoutSeconds(folder)
+        resolveSolverTimeoutSeconds(folder),
+        (kill) => {
+          // Cancel may have been requested in the brief window before the process
+          // actually existed to kill — honor it now instead of losing the click.
+          if (this.solverCancelRequested) kill();
+          else this.solverKill = kill;
+        }
       );
+      if (withPrints) {
+        const channel = getOutputChannel();
+        channel.appendLine(
+          `--- solver() prints — ${this.provider.label} ${this.ctx.group ? this.ctx.group + ' ' : ''}${this.ctx.index} part ${this.ctx.part} ---`
+        );
+        channel.appendLine(output || '(nothing printed)');
+        channel.show(true);
+      }
       this.view.webview.postMessage({ type: 'answerFilled', value: parts[this.ctx.part - 1] ?? parts[0] ?? '' });
     } catch (error) {
-      vscode.window.showErrorMessage(`Puzzle Submitter: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      if (/cancelled/i.test(message)) {
+        vscode.window.setStatusBarMessage('Puzzle Submitter: solver run cancelled.', 3000);
+      } else {
+        vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`);
+      }
+    } finally {
+      this.solverRunning = false;
+      this.solverKill = undefined;
     }
     await this.postState(); // input may have just been auto-fetched — refresh the "cached" indicator
   }
@@ -328,8 +364,8 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
     try {
       const result = await this.provider.submit(this.ctx, token, answer, contact);
       log(`Result: ${result.status} — ${result.message}`);
-      this.lastResult = result;
-      await recordSubmitResult(this.extensionContext.workspaceState, this.provider, this.ctx, answer, result, token, contact);
+      const recorded = await recordSubmitResult(this.extensionContext.workspaceState, this.provider, this.ctx, answer, result, token, contact);
+      this.lastResult = { status: result.status, message: describeSubmitResult(result, answer, recorded) };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log(`Error: ${message}`);

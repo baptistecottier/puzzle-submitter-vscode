@@ -6,6 +6,7 @@ import { promptManualContext } from './core/manualContext';
 import { PuzzleSubmitterViewProvider } from './webview/panelProvider';
 import { PuzzleTreeProvider, TreeNode } from './tree/puzzleTreeProvider';
 import { requireToken, promptAndSaveToken, clearToken } from './core/auth';
+import { offerToClearStaleData } from './core/accountSwitch';
 import { getConfiguredRunCommand, runCommandForAnswer } from './core/runCommand';
 import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from './core/pythonInterpreter';
 import { canRunSolver, runPythonSolver } from './core/pythonRunner';
@@ -14,7 +15,7 @@ import { ensureLocalInput } from './core/ensureInput';
 import { readLocalInput, siteInputPath, writeLocalInput } from './core/localInput';
 import { nextUnsolvedPart } from './core/progress';
 import { guardSubmit } from './core/submitGuard';
-import { recordSubmitResult } from './core/submitRecorder';
+import { recordSubmitResult, describeSubmitResult } from './core/submitRecorder';
 import { getStatusBarItem, refreshStatusBar } from './core/statusBar';
 import { getOutputChannel, log } from './core/output';
 
@@ -190,15 +191,16 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
       try {
         const result = await provider.submit!(ctx, token, answer, contact);
         log(`Result: ${result.status} — ${result.message}`);
-        await recordSubmitResult(context.workspaceState, provider, ctx, answer, result, token, contact);
+        const recorded = await recordSubmitResult(context.workspaceState, provider, ctx, answer, result, token, contact);
+        const message = describeSubmitResult(result, answer, recorded);
 
         const icon = { correct: '✅', 'already-solved': 'ℹ️', incorrect: '❌', 'rate-limited': '⏳', unknown: '⚠️' }[
           result.status
         ];
         if (result.status === 'correct' || result.status === 'already-solved') {
-          vscode.window.showInformationMessage(`${icon} ${result.message}`);
+          vscode.window.showInformationMessage(`${icon} ${message}`);
         } else {
-          vscode.window.showWarningMessage(`${icon} ${result.message}`);
+          vscode.window.showWarningMessage(`${icon} ${message}`);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -292,7 +294,8 @@ async function setInputCommand(context: vscode.ExtensionContext): Promise<void> 
 }
 
 async function setTokenCommand(context: vscode.ExtensionContext): Promise<void> {
-  const siteId = await resolveSite(activeOrFirstFolder());
+  const folder = activeOrFirstFolder();
+  const siteId = await resolveSite(folder);
   if (!siteId) return;
   const provider = providers[siteId];
   if (!provider.submit) {
@@ -302,6 +305,7 @@ async function setTokenCommand(context: vscode.ExtensionContext): Promise<void> 
   const token = await promptAndSaveToken(context.secrets, provider);
   if (token) {
     vscode.window.showInformationMessage(`Puzzle Submitter: token saved for ${provider.label}.`);
+    if (folder) await offerToClearStaleData(folder, provider, context.workspaceState);
     void panelProvider?.refresh();
     void treeProvider?.refresh();
   }

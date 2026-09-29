@@ -116,31 +116,14 @@ export function listSolvedPuzzles(state: vscode.Memento, provider: PuzzleProvide
   return results;
 }
 
-export interface SolvedGroupSummary {
-  group: string;
-  /** Display label, matching the tree's own group formatting (e.g. "GridOS 1", "Story 4"). */
-  label: string;
-  puzzles: number;
-  stars: number;
+/** Deletes every recorded answer/solved-part entry for this provider in this workspace
+ * — every puzzle, not just one. Progress isn't scoped per-account, so switching to a
+ * different account's token without clearing this would keep showing the old account's
+ * solved/answer state as if it belonged to the new one. */
+export async function clearProgress(state: vscode.Memento, provider: PuzzleProvider): Promise<void> {
+  const prefix = `puzzleSubmitter.progress.${provider.id}.`;
+  for (const key of state.keys()) {
+    if (key.startsWith(prefix)) await state.update(key, undefined);
+  }
 }
 
-/** listSolvedPuzzles collapsed to one entry per event/story — for compact display (e.g.
- * the sidebar panel), where one line per solved day doesn't scale to years of puzzles. */
-export function summarizeSolvedByGroup(state: vscode.Memento, provider: PuzzleProvider): SolvedGroupSummary[] {
-  const byGroup = new Map<string, SolvedGroupSummary>();
-  for (const puzzle of listSolvedPuzzles(state, provider)) {
-    const existing = byGroup.get(puzzle.group);
-    if (existing) {
-      existing.puzzles += 1;
-      existing.stars += puzzle.parts.length;
-      continue;
-    }
-    byGroup.set(puzzle.group, {
-      group: puzzle.group,
-      label: provider.groupLabel ? provider.groupLabel(puzzle.group) : puzzle.group || '(ungrouped)',
-      puzzles: 1,
-      stars: puzzle.parts.length,
-    });
-  }
-  return [...byGroup.values()].sort((a, b) => a.group.localeCompare(b.group));
-}

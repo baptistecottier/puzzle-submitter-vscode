@@ -157,3 +157,63 @@ test('a solver that runs longer than solverTimeoutSeconds is killed with a clear
     /timed out after 1s/
   );
 });
+
+test('onSpawn hands back a kill() that ends the run early with a distinct "cancelled" message', async () => {
+  const solution = tmpFile(
+    'day_12.py',
+    'import time\ndef solver(data):\n    time.sleep(30)\n    return "never"\n'
+  );
+  await assert.rejects(
+    runPythonSolver('python3', solution, { '1': 'x' }, 'text', 1, path.dirname(solution), 60, (kill) => {
+      setTimeout(kill, 50);
+    }),
+    /cancelled/
+  );
+});
+
+test('killing a run that has already finished is a harmless no-op', async () => {
+  const solution = tmpFile('day_13.py', 'def solver(data):\n    return "done"\n');
+  let kill: (() => void) | undefined;
+  const { parts } = await runPythonSolver('python3', solution, { '1': 'x' }, 'text', 1, path.dirname(solution), 60, (k) => {
+    kill = k;
+  });
+  assert.deepEqual(parts, ['done']);
+  assert.doesNotThrow(() => kill?.());
+});
+
+test('output captures the solution\'s own print() calls, with the result marker line stripped out', async () => {
+  const solution = tmpFile(
+    'day_10.py',
+    'def solver(data):\n    print("debug:", data)\n    print("more debug")\n    return int(data) * 2\n'
+  );
+  const { parts, output } = await runPythonSolver('python3', solution, { '1': '21' }, 'text', 1, path.dirname(solution), 60);
+  assert.deepEqual(parts, ['42']);
+  assert.equal(output, 'debug: 21\nmore debug');
+});
+
+test('output is an empty string when the solution prints nothing', async () => {
+  const solution = tmpFile('day_11.py', 'def solver(data):\n    return int(data)\n');
+  const { output } = await runPythonSolver('python3', solution, { '1': '1' }, 'text', 1, path.dirname(solution), 60);
+  assert.equal(output, '');
+});
+
+test('a solution using @dataclass at module level loads fine (needs the module registered in sys.modules before exec)', async () => {
+  const solution = tmpFile(
+    'quest_02.py',
+    [
+      'from dataclasses import dataclass',
+      '',
+      '@dataclass',
+      'class Point:',
+      '    x: int',
+      '    y: int',
+      '',
+      'def solver(data):',
+      '    p = Point(int(data), int(data))',
+      '    return p.x + p.y',
+      '',
+    ].join('\n')
+  );
+  const { parts } = await runPythonSolver('python3', solution, { '1': '5' }, 'text', 1, path.dirname(solution), 60);
+  assert.deepEqual(parts, ['10']);
+});

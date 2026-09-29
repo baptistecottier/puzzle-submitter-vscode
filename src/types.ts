@@ -43,6 +43,14 @@ export interface PuzzleProvider {
   /** Human label for a ctx.group value in the tree view, e.g. "gridos-1" -> "GridOS 1".
    * Defaults to the raw group (or "(ungrouped)" if empty) when a provider omits this. */
   groupLabel?(group: string): string;
+  /** Sort key for ordering groups in the tree/sync — needed whenever a provider's groups
+   * aren't all the same shape (e.g. Everybody Codes mixes 4-digit years, small story
+   * numbers, and "gridos-N"), since a plain string/numeric sort on the raw group would
+   * interleave them (story "3" sorts between years "2024" and "2025"). Compared with
+   * plain string comparison, so build it so ascending order gives the desired grouping
+   * (e.g. a category prefix followed by a zero-padded number). Defaults to the raw group
+   * value (equivalent to a plain sort) when a provider omits this. */
+  groupSortKey?(group: string): string;
   /** Infer year/day/quest + a default part from a file path relative to the workspace root. */
   detect(relativeFilePath: string): PuzzleContext | undefined;
   /** Link to the puzzle's page on the site, for a human to open. */

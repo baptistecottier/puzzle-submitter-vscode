@@ -3,10 +3,10 @@
 Submit puzzle answers to Advent of Code, Everybody Codes, Codyssi, i18n-puzzles and
 Coding Quest without leaving VS Code — works with a solution in any language (type or
 paste the answer, or point `puzzleSubmitter.runCommand` at any script that prints one),
-with an optional built-in runner for Python solutions specifically (see below).
+with an optional built-in runner for Python solutions specifically (see
+[Writing a Python solution](#writing-a-python-solution)).
 
-<!-- TODO: screenshot of the sidebar panel (media/screenshot-panel.png), see the mockup
-     shared in chat for a preview of the exact layout/theme this would show. -->
+<img src="media/demo.gif" alt="Puzzle Submitter sidebar panel and Puzzles tree" width="360">
 
 ## Features
 
@@ -22,19 +22,20 @@ with an optional built-in runner for Python solutions specifically (see below).
 - **Fetches and caches input locally** for the two sites with an API (decrypting
   Everybody Codes' input automatically); a manual "Set Input" from the clipboard covers
   the rest, or overrides any of them.
-- **Runs a Python solution directly** — `preprocessing()`/`solver()` from the open `.py`
-  file, no wrapper script needed, matching the calling convention each site's own
-  reference tooling (`aocp.py`, `ec.py`, ...) actually uses. This is the one Python-specific
-  piece of the extension; everything else (detection, fetching input, submitting) is
-  language-agnostic — solving in something other than Python just means typing the
-  answer in, or wiring up `puzzleSubmitter.runCommand` to run your own solution however
-  it needs to run.
+- **Runs a Python solution directly** — define `solver(data)` (and optionally
+  `preprocessing(data)`) in the open `.py` file and it's called for you, no wrapper
+  script needed. See [Writing a Python solution](#writing-a-python-solution). This is
+  the one Python-specific piece of the extension — everything else (detection, fetching
+  input, submitting) is language-agnostic; solving in something else just means typing
+  the answer in, or wiring up `puzzleSubmitter.runCommand`.
 - **Checks against a recorded answer before submitting**, everywhere you can submit
   (command, panel, tree): if what you're about to submit already matches an
   answer this extension has confirmed correct, it's not sent again — the site would just
   say "already solved" without telling you anything new. If it *contradicts* a confirmed
   answer, you're asked to confirm before spending a submission attempt on what's very
-  likely a wrong answer.
+  likely a wrong answer. If nothing was recorded yet and the site comes back "already
+  solved" anyway, the real answer is fetched on the spot (same lookup as "Fetch Reference
+  Answers from Site" below) and shown right in that message — not just saved silently.
 
 ## Install
 
@@ -52,6 +53,41 @@ directly from [marketplace.visualstudio.com/items?itemName=baptistecottier.puzzl
    stored in VS Code's encrypted `SecretStorage`, never written to a file.
 4. Fetch or set the input, provide an answer, hit Submit.
 
+## Writing a Python solution
+
+If your solution is a `.py` file, this extension can call it directly — no wrapper
+script needed. **`solver(data)` is the only required function.** `preprocessing(data)`
+is optional, for transforming the raw cached input before `solver()` sees it.
+
+```python
+def preprocessing(data):       # optional — transforms the raw input text
+    return [int(n) for n in data.splitlines()]
+
+def solver(data):              # required — returns the answer
+    return sum(data)
+```
+
+This works the same way for **any of the five sites** — it's the one Python-specific
+piece of the extension. Solving in another language just means typing the answer in,
+or pointing `puzzleSubmitter.runCommand` at your own script.
+
+**Exact calling convention**, if you need it:
+
+- `data` starts out as the puzzle's cached input text (see
+  [Local input format](#local-input-format)) — fetched automatically first for
+  aoc/everybodycodes if missing, or via "Set Input" for the other three.
+- If `preprocessing()` is defined, it's called first and its return value becomes
+  `data` for `solver()`.
+- `solver(data)` is called — **except**: if `preprocessing()` returned a *tuple*, it's
+  unpacked into `solver(*data)` (matching `aocp.py`'s own rule — a *list* is passed
+  through as one argument, never unpacked); Everybody Codes' `solver()` instead always
+  receives every part at once as one dict argument (`{1: ..., 2: ..., 3: ...}`),
+  matching `ec.py`.
+- If `solver()` returns a tuple, list, or generator, each item is treated as one part's
+  answer (`parts[0]` for part 1, `parts[1]` for part 2, ...); a single return value is
+  used as-is.
+- No `solver()` defined → a clear error message, not a cryptic traceback.
+
 ## Sidebar panel
 
 Click the Puzzle Submitter icon in the Activity Bar for a form instead of the command
@@ -61,9 +97,13 @@ palette:
 - Input status, with Fetch/Set buttons, and a preview of the *active puzzle's* cached
   input only — never the rest of the site's file (see [Local input format](#local-input-format)) —
   capped at 2000 characters with an "Open full input in a tab" link for anything longer.
-- An answer field, with "Run solver()"/"Run configured command" buttons to fill it.
+- An answer field, with "Run solver()"/"Run configured command" buttons to fill it. The
+  solver button has a ▾ arrow with a "Run Python Solver with prints" option, for when
+  you want to see any `print()` output from `preprocessing()`/`solver()` (normally
+  discarded) — it's written to the "Puzzle Submitter" output channel, which is then shown.
+  While a solver is running, the button becomes a "Cancel" you can click to kill it
+  immediately, instead of waiting out `puzzleSubmitter.solverTimeoutSeconds`.
 - Submit, with the result shown inline.
-- What's already been solved in this workspace.
 
 The status bar item (bottom left) opens this panel when clicked. The panel only covers
 the common path — if a file can't be auto-detected, it falls back to the same "pick
@@ -92,7 +132,9 @@ no "list all my puzzles" API to build this from instead).
   instead of clicking "Fetch Reference Answers" and "Run All Quests" separately for every
   year you've ever touched. Needs your session token if the site has any fetch API; sites
   with neither (codyssi, i18n-puzzles, coding quest) just get benchmarked, across
-  everything, with no token prompt at all. Cancellable from the progress notification.
+  everything, with no token prompt at all. Cancellable from the progress notification —
+  this also kills whichever solver run is currently in flight, instead of only stopping
+  before the next quest.
 - **Run All Parts** (on a quest) / **Run All Quests** (on an event) — a **local,
   offline benchmark**: runs `solver()` for each part and compares it against the answer
   this workspace already has recorded as correct, with no network call. It's a
@@ -107,11 +149,14 @@ no "list all my puzzles" API to build this from instead).
 - **Fetch Reference Answers from Site** (right-click an event) — the benchmark can only
   compare against an answer this extension has actually recorded, and re-submitting an
   already-solved puzzle just gets "already solved" back, never the answer text. This
-  reads the confirmed answer straight off the site's own puzzle page instead (Advent of
-  Code shows "Your puzzle answer was ..." for parts you've already solved, even ones
-  solved outside this extension entirely) — useful for backfilling reference answers for
+  reads the confirmed answer straight from the site instead: for Advent of Code, the
+  puzzle page's "Your puzzle answer was ..." text; for Everybody Codes, the same API
+  response `fetchInput` already reads decryption keys from also carries
+  `answer1`/`answer2`/`answer3` in plain text. Either way, it works for puzzles solved
+  outside this extension entirely — useful for backfilling reference answers for
   puzzles you solved before you had this extension, or before the benchmark existed.
-  AoC only for now; needs your session token, and does one page request per quest with a
+  AoC and Everybody Codes only (the other three have no submission API to read answers
+  back from either); needs your session token, and does one request per quest with a
   short pause between them. You don't need to run this manually going forward, either:
   any submit that comes back "already solved" now does this same lookup automatically,
   so the reference answer fills in on its own the next time you happen to resubmit
@@ -133,7 +178,12 @@ no "list all my puzzles" API to build this from instead).
   clipboard as this puzzle's local input, merged into the same cache "Fetch Input" uses.
   The only way to get local input for codyssi/i18n-puzzles/coding quest (no fetch API),
   and a manual override/correction for any site.
-- **Puzzle Submitter: Set Token for Current Site** / **Clear Token for Current Site**
+- **Puzzle Submitter: Set Token for Current Site** / **Clear Token for Current Site** —
+  setting a token, if this workspace already has cached input or recorded answers for
+  the site, asks whether to clear them. Neither is scoped per-account, so switching to a
+  different account's token (e.g. testing with a fresh/demo account) would otherwise keep
+  showing the previous account's input and solved/answer state as if it belonged to the
+  new one. Skipped entirely on a genuine first-time setup, where there's nothing to clear.
 - **Puzzle Submitter: Set Site for Workspace**
 
 ## Settings
@@ -213,19 +263,5 @@ event and every puzzle for that site in one file, filled in via "Fetch Input"
 (aoc/everybodycodes) or "Set Input" (any site, from the clipboard). Reading or writing
 one puzzle's input only ever touches that one `store[group][index]` entry — the sidebar
 panel's input preview, "Run solver()", etc. all resolve to just the active puzzle,
-never the whole file.
-
-"Submit Answer" calls your solution file's `preprocessing(data)`/`solver(data)` directly
-instead of running a separate command, for any site, on a `.py` file:
-
-- Reads the cached JSON above — for aoc/everybodycodes, fetching it automatically
-  first (prompting for a token if needed) when it's missing; for the other three,
-  run "Set Input" first.
-- Runs it through `preprocessing()` if the file defines one.
-- Calls `solver(data)`, or `solver(*data)` when `preprocessing()` returned a tuple/list
-  (matching `aocp.py`'s own unpacking rule) — **except Everybody Codes**, whose real
-  `solver()` (see `ec.py`) expects every part at once as one dict argument
-  (`{1: ..., 2: ..., 3: ...}`), not per-part text; the runner passes that shape there.
-- If `solver()` returns a tuple/list/generator, each item is treated as one part's
-  answer (`parts[0]` for part 1, `parts[1]` for part 2, ...); a single return value is
-  used as-is.
+never the whole file. See [Writing a Python solution](#writing-a-python-solution) for
+how `preprocessing()`/`solver()` consume this.

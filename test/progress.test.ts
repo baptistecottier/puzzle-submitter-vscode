@@ -2,12 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   checkAgainstRecorded,
+  clearProgress,
   getRecordedAnswer,
   getSolvedParts,
   listSolvedPuzzles,
   markSolved,
   nextUnsolvedPart,
-  summarizeSolvedByGroup,
 } from '../src/core/progress';
 import { PuzzleProvider } from '../src/types';
 
@@ -162,39 +162,28 @@ test('checkAgainstRecorded: mismatch when the candidate differs from the recorde
   assert.equal(checkAgainstRecorded(state, fakeProvider, ctx, '43'), 'mismatch');
 });
 
-test('summarizeSolvedByGroup is empty when nothing has been solved', () => {
+test('clearProgress removes every recorded answer/solved part for a provider, across every puzzle', async () => {
   const state = new FakeMemento() as unknown as import('vscode').Memento;
-  assert.deepEqual(summarizeSolvedByGroup(state, fakeProvider), []);
+  await markSolved(state, fakeProvider, { group: '2024', index: '1', part: 1 }, 1, 'a');
+  await markSolved(state, fakeProvider, { group: '2024', index: '2', part: 1 }, 1, 'b');
+
+  await clearProgress(state, fakeProvider);
+
+  assert.deepEqual(listSolvedPuzzles(state, fakeProvider), []);
 });
 
-test('summarizeSolvedByGroup collapses many solved days into one entry per group, counting puzzles and stars separately', async () => {
-  const state = new FakeMemento() as unknown as import('vscode').Memento;
-  await markSolved(state, fakeProvider, { group: '2015', index: '1', part: 1 }, 1, 'a');
-  await markSolved(state, fakeProvider, { group: '2015', index: '1', part: 1 }, 2, 'b');
-  await markSolved(state, fakeProvider, { group: '2015', index: '2', part: 1 }, 1, 'c'); // only part 1
-  await markSolved(state, fakeProvider, { group: '2022', index: '1', part: 1 }, 1, 'd');
-
-  assert.deepEqual(summarizeSolvedByGroup(state, fakeProvider), [
-    { group: '2015', label: '2015', puzzles: 2, stars: 3 },
-    { group: '2022', label: '2022', puzzles: 1, stars: 1 },
-  ]);
-});
-
-test('summarizeSolvedByGroup uses the provider\'s groupLabel when it has one', async () => {
-  const state = new FakeMemento() as unknown as import('vscode').Memento;
-  const gridosProvider = {
-    id: 'everybodycodes',
-    groupLabel: (group: string) => 'GridOS ' + group.replace('gridos-', ''),
-  } as PuzzleProvider;
-  await markSolved(state, gridosProvider, { group: 'gridos-1', index: '1', part: 1 }, 1, 'a');
-  assert.deepEqual(summarizeSolvedByGroup(state, gridosProvider), [
-    { group: 'gridos-1', label: 'GridOS 1', puzzles: 1, stars: 1 },
-  ]);
-});
-
-test('summarizeSolvedByGroup never mixes different providers', async () => {
+test('clearProgress never touches a different provider', async () => {
   const state = new FakeMemento() as unknown as import('vscode').Memento;
   await markSolved(state, fakeProvider, { group: '2024', index: '1', part: 1 }, 1, 'a');
   await markSolved(state, otherProvider, { group: '2024', index: '1', part: 1 }, 1, 'b');
-  assert.deepEqual(summarizeSolvedByGroup(state, fakeProvider), [{ group: '2024', label: '2024', puzzles: 1, stars: 1 }]);
+
+  await clearProgress(state, fakeProvider);
+
+  assert.deepEqual(listSolvedPuzzles(state, fakeProvider), []);
+  assert.deepEqual(listSolvedPuzzles(state, otherProvider), [{ group: '2024', index: '1', parts: [1] }]);
+});
+
+test('clearProgress on a provider with nothing recorded does not throw', async () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  await assert.doesNotReject(clearProgress(state, fakeProvider));
 });

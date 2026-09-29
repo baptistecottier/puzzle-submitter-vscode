@@ -25,10 +25,14 @@ export async function benchmarkPart(
   pythonPath: string,
   timeoutSeconds: number,
   folder: vscode.WorkspaceFolder,
-  workspaceState: vscode.Memento
+  workspaceState: vscode.Memento,
+  cancelToken?: vscode.CancellationToken
 ): Promise<PartBenchmark> {
   if (!provider.solverInputShape) {
     return { status: 'error', message: `${provider.label} has no solver() runner.` };
+  }
+  if (cancelToken?.isCancellationRequested) {
+    return { status: 'error', message: 'Cancelled.' };
   }
   const inputParts = readLocalInput(folder, provider.id, ctx);
   if (!inputParts?.[String(ctx.part)]) {
@@ -36,6 +40,7 @@ export async function benchmarkPart(
   }
 
   try {
+    let cancelSub: vscode.Disposable | undefined;
     const { parts } = await runPythonSolver(
       pythonPath,
       solutionFile,
@@ -43,8 +48,11 @@ export async function benchmarkPart(
       provider.solverInputShape,
       ctx.part,
       folder.uri.fsPath,
-      timeoutSeconds
-    );
+      timeoutSeconds,
+      (kill) => {
+        cancelSub = cancelToken?.onCancellationRequested(kill);
+      }
+    ).finally(() => cancelSub?.dispose());
     const computed = parts[ctx.part - 1] ?? parts[0] ?? '';
     const recorded = getRecordedAnswer(workspaceState, provider, ctx, ctx.part);
     if (recorded === undefined) {
