@@ -2,7 +2,7 @@
   "name": "puzzle-submitter",
   "displayName": "Puzzle Submitter",
   "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code, with an optional Python solver() runner to fill in answers automatically.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "baptistecottier",
   "license": "MIT",
   "icon": "icon.png",
