@@ -97,12 +97,12 @@ palette:
 - Input status, with Fetch/Set buttons, and a preview of the *active puzzle's* cached
   input only — never the rest of the site's file (see [Local input format](#local-input-format)) —
   capped at 2000 characters with an "Open full input in a tab" link for anything longer.
-- An answer field, with "Run solver()"/"Run configured command" buttons to fill it. The
-  solver button has a ▾ arrow with a "Run Python Solver with prints" option, for when
-  you want to see any `print()` output from `preprocessing()`/`solver()` (normally
-  discarded) — it's written to the "Puzzle Submitter" output channel, which is then shown.
-  While a solver is running, the button becomes a "Cancel" you can click to kill it
-  immediately, instead of waiting out `puzzleSubmitter.solverTimeoutSeconds`.
+- An answer field, with "Run solver()"/"Run configured command" buttons to fill it. A
+  "Show prints" checkbox next to the solver button controls whether `print()` output
+  from `preprocessing()`/`solver()` (normally discarded) is written to the "Puzzle
+  Submitter" output channel, which is then shown. While a solver is running, the button
+  becomes a "Cancel" you can click to kill it immediately, instead of waiting out
+  `puzzleSubmitter.solverTimeoutSeconds`.
 - Submit, with the result shown inline.
 
 The status bar item (bottom left) opens this panel when clicked. The panel only covers
@@ -174,6 +174,9 @@ no "list all my puzzles" API to build this from instead).
 - **Puzzle Submitter: Fetch Input** — aoc/everybodycodes only. Downloads (and for
   Everybody Codes, decrypts) every currently-unlocked part of the puzzle input in one go,
   and never re-downloads a part already cached locally.
+- **Puzzle Submitter: Run Python Solver** — runs the active file's `preprocessing()`/
+  `solver()` (see [Writing a Python solution](#writing-a-python-solution)) and copies the
+  result to the clipboard, without going through the full Submit Answer flow.
 - **Puzzle Submitter: Set Input (from Clipboard)** — any site. Saves whatever's on the
   clipboard as this puzzle's local input, merged into the same cache "Fetch Input" uses.
   The only way to get local input for codyssi/i18n-puzzles/coding quest (no fetch API),

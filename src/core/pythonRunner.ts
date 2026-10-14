@@ -83,6 +83,24 @@ export interface PythonRunResult {
   output: string;
 }
 
+/** Thrown for any run failure. `message` is a short, one-line summary fit for a VS Code
+ * notification; `detail`, if present, is the fuller picture (the solution's own prints,
+ * a full traceback) that belongs in the output channel instead of a toast — see
+ * showSolverError in ./output. */
+export class SolverError extends Error {
+  constructor(message: string, public readonly detail?: string) {
+    super(message);
+    this.name = 'SolverError';
+  }
+}
+
+/** The last non-empty line of a Python traceback is the actual exception
+ * ("ValueError: ...") — a far more useful one-line summary than the whole traceback. */
+function lastLine(text: string): string | undefined {
+  const lines = text.trim().split('\n').filter(Boolean);
+  return lines.length ? lines[lines.length - 1] : undefined;
+}
+
 /** Runs preprocessing()/solver() from a Python solution file against locally-cached input.
  * Killed after timeoutSeconds if it hasn't finished — see puzzleSubmitter.solverTimeoutSeconds,
  * which callers resolve and pass in (this file stays vscode-free so it's plain-Node testable).
@@ -114,26 +132,36 @@ export function runPythonSolver(
     let cancelled = false;
     const child = cp.execFile(
       pythonPath,
-      [bootstrapPath, solutionFile, partsPath, shape, String(targetPart), MARKER],
+      // -u: unbuffered stdout/stderr. Without it, a killed (timeout/cancel) or crashed
+      // process can lose its own print() output to Python's block-buffering — it's only
+      // flushed on a normal exit, which neither of those is.
+      ['-u', bootstrapPath, solutionFile, partsPath, shape, String(targetPart), MARKER],
       { cwd, timeout: timeoutSeconds * 1000, maxBuffer: 10 * 1024 * 1024 },
       (error, stdout, stderr) => {
         cleanup();
         if (cancelled) {
-          reject(new Error('Solver run cancelled.'));
+          reject(new SolverError('Solver run cancelled.', stdout.trim() || undefined));
           return;
         }
         if (error?.killed && error.signal) {
-          reject(new Error(`Solver timed out after ${timeoutSeconds}s (puzzleSubmitter.solverTimeoutSeconds) — killed.`));
+          reject(
+            new SolverError(
+              `Solver timed out after ${timeoutSeconds}s (puzzleSubmitter.solverTimeoutSeconds) — killed.`,
+              stdout.trim() || undefined
+            )
+          );
           return;
         }
         if (error) {
-          reject(new Error(`Solver failed (${pythonPath}): ${error.message}${stderr ? `\n${stderr.trim()}` : ''}`));
+          const summary = lastLine(stderr) ?? error.message;
+          const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n\n');
+          reject(new SolverError(`Solver failed: ${summary}`, detail || undefined));
           return;
         }
         const lines = stdout.split('\n');
         const markerIndex = lines.findIndex((l) => l.startsWith(MARKER));
         if (markerIndex === -1) {
-          reject(new Error(`Solver ran but printed no result.\n${(stdout + stderr).trim()}`));
+          reject(new SolverError('Solver ran but printed no result.', (stdout + stderr).trim() || undefined));
           return;
         }
         const output = lines.filter((_, i) => i !== markerIndex).join('\n').trim();
@@ -141,7 +169,7 @@ export function runPythonSolver(
           const parts = JSON.parse(lines[markerIndex].slice(MARKER.length)) as string[];
           resolve({ parts, output });
         } catch {
-          reject(new Error(`Could not parse solver result: ${lines[markerIndex]}`));
+          reject(new SolverError('Could not parse solver result.', lines[markerIndex]));
         }
       }
     );

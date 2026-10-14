@@ -14,7 +14,7 @@ import { requireToken } from '../core/auth';
 import { getRecordedAnswer, markSolved } from '../core/progress';
 import { guardSubmit } from '../core/submitGuard';
 import { recordSubmitResult, describeSubmitResult } from '../core/submitRecorder';
-import { log } from '../core/output';
+import { log, showSolverError } from '../core/output';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -644,7 +644,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             );
             return parts[node.part - 1] ?? parts[0];
           } catch (error) {
-            vscode.window.showErrorMessage(`Puzzle Submitter: ${error instanceof Error ? error.message : String(error)}`);
+            await showSolverError(error);
             return undefined;
           }
         }

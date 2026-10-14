@@ -43,6 +43,10 @@
         "title": "Puzzle Submitter: Fetch Input"
       },
       {
+        "command": "puzzleSubmitter.runSolver",
+        "title": "Puzzle Submitter: Run Python Solver"
+      },
+      {
         "command": "puzzleSubmitter.setInput",
         "title": "Puzzle Submitter: Set Input (from Clipboard)"
       },

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { runPythonSolver } from '../src/core/pythonRunner';
+import { runPythonSolver, SolverError } from '../src/core/pythonRunner';
 
 function tmpFile(name: string, contents: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'puzzle-submitter-test-'));
@@ -147,6 +147,22 @@ test('missing solver() surfaces a clear error instead of a cryptic traceback', a
   );
 });
 
+test('a crash is reported with a short summary, and the solution\'s own prints (lost before this ran unbuffered) are preserved in .detail', async () => {
+  const solution = tmpFile(
+    'day_14.py',
+    "def solver(data):\n    print('before crash')\n    raise ValueError('bad input: ' + data)\n"
+  );
+  await assert.rejects(
+    runPythonSolver('python3', solution, { '1': '42' }, 'text', 1, path.dirname(solution), 60),
+    (error: unknown) => {
+      assert.ok(error instanceof SolverError);
+      assert.match(error.message, /^Solver failed: ValueError: bad input: 42$/);
+      assert.match(error.detail ?? '', /before crash/);
+      return true;
+    }
+  );
+});
+
 test('a solver that runs longer than solverTimeoutSeconds is killed with a clear message, not a hang', async () => {
   const solution = tmpFile(
     'day_09.py',
@@ -155,6 +171,21 @@ test('a solver that runs longer than solverTimeoutSeconds is killed with a clear
   await assert.rejects(
     runPythonSolver('python3', solution, { '1': 'x' }, 'text', 1, path.dirname(solution), 1),
     /timed out after 1s/
+  );
+});
+
+test('prints before a timeout kill are preserved in .detail, not lost to Python\'s output buffering', async () => {
+  const solution = tmpFile(
+    'day_10.py',
+    "import time\ndef solver(data):\n    print('print before hang')\n    time.sleep(30)\n    return 'never'\n"
+  );
+  await assert.rejects(
+    runPythonSolver('python3', solution, { '1': 'x' }, 'text', 1, path.dirname(solution), 1),
+    (error: unknown) => {
+      assert.ok(error instanceof SolverError);
+      assert.match(error.detail ?? '', /print before hang/);
+      return true;
+    }
   );
 });
 

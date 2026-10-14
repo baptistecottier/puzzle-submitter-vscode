@@ -97,6 +97,8 @@ export function getWebviewHtml(): string {
     font-size: 12px;
   }
   a.link { color: var(--vscode-textLink-foreground); cursor: pointer; }
+  .checkbox-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
+  .checkbox-label input[type=checkbox] { margin: 0; cursor: pointer; }
   .input-preview {
     margin: 6px 0 0;
     padding: 6px 8px;
@@ -110,30 +112,6 @@ export function getWebviewHtml(): string {
     word-break: break-all;
   }
   .input-preview-note { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
-  .split-button { position: relative; display: inline-flex; }
-  .split-button button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-  .split-arrow {
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
-    border-left: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
-    padding: 4px 5px;
-    display: flex;
-    align-items: center;
-  }
-  .split-menu {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    z-index: 10;
-    margin-top: 2px;
-    background: var(--vscode-dropdown-background, var(--vscode-editorWidget-background));
-    border: 1px solid var(--vscode-dropdown-border, var(--vscode-widget-border));
-    border-radius: 2px;
-    white-space: nowrap;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  }
-  .split-menu-item { padding: 6px 10px; cursor: pointer; }
-  .split-menu-item:hover { background: var(--vscode-list-hoverBackground); }
 </style>
 </head>
 <body>
@@ -142,7 +120,7 @@ export function getWebviewHtml(): string {
 const vscode = acquireVsCodeApi();
 let state = { progress: [] };
 let draftAnswer = '';
-let solverMenuOpen = false;
+let showPrints = false;
 
 function el(tag, props, children) {
   const node = document.createElement(tag);
@@ -244,26 +222,18 @@ function render() {
   if (state.solverRunning) {
     runButtons.appendChild(el('button', { onclick: () => post({ type: 'cancelSolver' }), text: 'Running solver… Cancel' }));
   } else if (state.supportsSolver) {
-    const arrowButton = el('button', {
-      class: 'split-arrow',
-      'aria-label': 'More run options',
-      onclick: (e) => { e.stopPropagation(); solverMenuOpen = !solverMenuOpen; render(); },
-    });
-    arrowButton.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M7.976 10.072l4.357-4.357.618.62L8.284 11h-.618L3 6.333l.619-.618 4.357 4.357z"/></svg>';
-    const splitButton = el('div', { class: 'split-button' }, [
-      el('button', { onclick: () => post({ type: 'runSolver' }), text: 'Run Python solver' }),
-      arrowButton,
-    ]);
-    if (solverMenuOpen) {
-      splitButton.appendChild(el('div', { class: 'split-menu' }, [
-        el('div', {
-          class: 'split-menu-item',
-          onclick: () => { solverMenuOpen = false; post({ type: 'runSolver', withPrints: true }); },
-          text: 'Run Python solver with prints',
-        }),
-      ]));
-    }
-    runButtons.appendChild(splitButton);
+    runButtons.appendChild(el('button', {
+      onclick: () => post({ type: 'runSolver', withPrints: showPrints }),
+      text: 'Run Python solver',
+    }));
+    runButtons.appendChild(el('label', { class: 'checkbox-label' }, [
+      el('input', {
+        type: 'checkbox',
+        ...(showPrints ? { checked: 'checked' } : {}),
+        onchange: (e) => { showPrints = e.target.checked; },
+      }),
+      document.createTextNode('Show prints'),
+    ]));
   }
   if (state.hasRunCommand) {
     runButtons.appendChild(el('button', { onclick: () => post({ type: 'runCommand' }), text: 'Run configured command' }));
@@ -304,17 +274,9 @@ window.addEventListener('message', (event) => {
   const msg = event.data;
   if (msg.type === 'state') {
     state = msg.state;
-    solverMenuOpen = false;
     render();
   } else if (msg.type === 'answerFilled') {
     draftAnswer = msg.value;
-    render();
-  }
-});
-
-document.addEventListener('click', () => {
-  if (solverMenuOpen) {
-    solverMenuOpen = false;
     render();
   }
 });

@@ -14,7 +14,7 @@ import { recordSubmitResult, describeSubmitResult } from '../core/submitRecorder
 import { promptManualContext } from '../core/manualContext';
 import { ensureLocalInput } from '../core/ensureInput';
 import { readLocalInput, siteInputPath, writeLocalInput } from '../core/localInput';
-import { getOutputChannel, log } from '../core/output';
+import { getOutputChannel, log, showSolverError } from '../core/output';
 import { getWebviewHtml } from './panelHtml';
 
 const INPUT_PREVIEW_LIMIT = 2000;
@@ -308,7 +308,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       if (/cancelled/i.test(message)) {
         vscode.window.setStatusBarMessage('Puzzle Submitter: solver run cancelled.', 3000);
       } else {
-        vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`);
+        await showSolverError(error);
       }
     } finally {
       this.solverRunning = false;

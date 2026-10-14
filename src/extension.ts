@@ -17,7 +17,7 @@ import { nextUnsolvedPart } from './core/progress';
 import { guardSubmit } from './core/submitGuard';
 import { recordSubmitResult, describeSubmitResult } from './core/submitRecorder';
 import { getStatusBarItem, refreshStatusBar } from './core/statusBar';
-import { getOutputChannel, log } from './core/output';
+import { getOutputChannel, log, showSolverError } from './core/output';
 
 let panelProvider: PuzzleSubmitterViewProvider | undefined;
 let treeProvider: PuzzleTreeProvider | undefined;
@@ -143,7 +143,7 @@ async function resolveAnswer(
     if (output === undefined) return undefined;
     return vscode.window.showInputBox({ title: `${label} (from ${choice.id === 'solver' ? 'solver()' : 'command output'} — edit if needed)`, value: output, ignoreFocusOut: true });
   } catch (error) {
-    vscode.window.showErrorMessage(`Puzzle Submitter: ${error instanceof Error ? error.message : String(error)}`);
+    await showSolverError(error);
     return undefined;
   }
 }
@@ -261,6 +261,33 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
   );
 }
 
+async function runSolverCommand(context: vscode.ExtensionContext): Promise<void> {
+  const target = requireWorkspaceEditor();
+  if (!target) return;
+  const { editor, folder } = target;
+
+  const siteId = await resolveSite(folder);
+  if (!siteId) return;
+  const provider = providers[siteId];
+
+  const ctx = await resolveContext(provider, editor, context.workspaceState);
+  if (!ctx) return;
+
+  if (!canRunSolver(provider, ctx, editor.document.uri.fsPath)) {
+    vscode.window.showErrorMessage(`Puzzle Submitter: no solver() detected for this file — it needs preprocessing()/solver() and a cached or fetchable input.`);
+    return;
+  }
+
+  try {
+    const output = await runSolverForAnswer(provider, ctx, editor, folder, context.secrets);
+    if (output === undefined) return;
+    await vscode.env.clipboard.writeText(output);
+    vscode.window.showInformationMessage(`Puzzle Submitter: solver() result — "${output}" (copied to clipboard).`);
+  } catch (error) {
+    await showSolverError(error);
+  }
+}
+
 async function setInputCommand(context: vscode.ExtensionContext): Promise<void> {
   const target = requireWorkspaceEditor();
   if (!target) return;
@@ -336,6 +363,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('puzzleSubmitter.submitAnswer', () => submitAnswerCommand(context)),
     vscode.commands.registerCommand('puzzleSubmitter.fetchInput', () => fetchInputCommand(context)),
+    vscode.commands.registerCommand('puzzleSubmitter.runSolver', () => runSolverCommand(context)),
     vscode.commands.registerCommand('puzzleSubmitter.setInput', () => setInputCommand(context)),
     vscode.commands.registerCommand('puzzleSubmitter.setToken', () => setTokenCommand(context)),
     vscode.commands.registerCommand('puzzleSubmitter.clearToken', () => clearTokenCommand(context)),
