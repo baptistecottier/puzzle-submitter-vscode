@@ -1,4 +1,5 @@
 import { PuzzleContext, PuzzleProvider, SubmitResult } from '../types';
+import { extractAocExamples } from './aocExamples';
 
 const DETECT_RE = /events\/year_(\d{4})\/day_(\d{2})\//;
 
@@ -105,6 +106,11 @@ export const aocProvider: PuzzleProvider = {
   async fetchRecordedAnswers(ctx, token, contact) {
     const response = await fetchAoc(`https://adventofcode.com/${ctx.group}/day/${ctx.index}`, token, contact);
     return parseRecordedAnswers(await response.text());
+  },
+
+  async fetchExamples(ctx, token, contact) {
+    const response = await fetchAoc(`https://adventofcode.com/${ctx.group}/day/${ctx.index}`, token, contact);
+    return extractAocExamples(await response.text(), Number(ctx.group), Number(ctx.index), this.maxPartFor!(ctx));
   },
 
   async submit(ctx, token, answer, contact) {

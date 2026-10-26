@@ -9,10 +9,15 @@ export async function getToken(secrets: vscode.SecretStorage, provider: PuzzlePr
   return secrets.get(secretKey(provider.id));
 }
 
+/** Handed to callers for a site without accounts (no submission API): it fetches only
+ * public pages, so there's no token to ask for — but callers stop on a missing one. */
+const NO_ACCOUNT = 'no-account';
+
 export async function requireToken(
   secrets: vscode.SecretStorage,
   provider: PuzzleProvider
 ): Promise<string | undefined> {
+  if (!provider.submit) return NO_ACCOUNT;
   const existing = await getToken(secrets, provider);
   if (existing) {
     return existing;

@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { editorFileUri } from '../core/editorFile';
 import { PuzzleContext, PuzzleProvider } from '../types';
 import { providers } from '../providers';
 import { peekSite } from '../core/siteResolver';
@@ -8,13 +9,16 @@ import { canRunSolver, runPythonSolver } from '../core/pythonRunner';
 import { maxPartFor } from '../core/puzzleParts';
 import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from '../core/pythonInterpreter';
 import { ensureLocalInput } from '../core/ensureInput';
-import { benchmarkPart, PartBenchmark } from '../core/benchmark';
+import { benchmarkGridosPart, benchmarkPart, PartBenchmark } from '../core/benchmark';
+import { isGridosGroup } from '../providers/everybodycodes';
 import { inferPathPrefix, planNewEvent, scaffoldFileContent } from '../core/puzzleScaffold';
 import { requireToken } from '../core/auth';
-import { getRecordedAnswer, markSolved } from '../core/progress';
+import { getRecordedAnswer, getSolvedParts, markSolved } from '../core/progress';
+import { getPublishedAnswer, storePublishedAnswers } from '../core/publishedAnswers';
+import { fetchAndCacheExamples, needsExampleFetch, readExamples } from '../core/examples';
 import { guardSubmit } from '../core/submitGuard';
 import { recordSubmitResult, describeSubmitResult } from '../core/submitRecorder';
-import { log, showSolverError } from '../core/output';
+import { askForSolverInput, log, showSolverError } from '../core/output';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -39,6 +43,11 @@ function questKey(group: string, index: string): string {
 
 type Tally = { match: number; mismatch: number; other: number };
 
+/** Which parts the tree shows; quests and events appear when any of their parts does. */
+export type SolvedFilter = 'all' | 'unsolved' | 'solved';
+const FILTER_KEY = 'puzzleSubmitter.tree.filter';
+const FILTER_LABELS: Record<SolvedFilter, string> = { all: 'All', unsolved: 'Unsolved', solved: 'Solved' };
+
 /**
  * Browsable event → quest → part tree, populated by scanning the workspace for .py
  * files the current site's provider recognizes (not from any "list all puzzles" API —
@@ -56,8 +65,51 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private quests = new Map<string, Map<string, QuestEntry>>(); // group -> index -> entry
   private partResults = new Map<string, PartBenchmark>();
   private questResults = new Map<string, Tally>(); // last "Run All Parts" summary, keyed by questKey
+  private filter: SolvedFilter;
+  private view: vscode.TreeView<TreeNode> | undefined;
 
-  constructor(private readonly extensionContext: vscode.ExtensionContext) {}
+  constructor(private readonly extensionContext: vscode.ExtensionContext) {
+    this.filter = extensionContext.workspaceState.get<SolvedFilter>(FILTER_KEY, 'all');
+  }
+
+  /** The tree view this provider fills — its description shows the active filter. */
+  attach(view: vscode.TreeView<TreeNode>): void {
+    this.view = view;
+    this.showFilter();
+  }
+
+  private showFilter(): void {
+    if (this.view) this.view.description = this.filter === 'all' ? undefined : FILTER_LABELS[this.filter];
+  }
+
+  /** "Filter" toolbar button: all puzzles, only parts still to solve, or only solved ones
+   * — solved as recorded by this extension (a submit, a backfill, Sync). */
+  async pickFilter(): Promise<void> {
+    const options = (['all', 'unsolved', 'solved'] as const).map((filter) => ({
+      label: FILTER_LABELS[filter],
+      description: filter === this.filter ? '(current)' : undefined,
+      detail: { all: 'Every puzzle found in the workspace', unsolved: 'Parts not solved yet', solved: 'Parts already solved' }[filter],
+      filter,
+    }));
+    const picked = await vscode.window.showQuickPick(options, { title: 'Puzzles: show which parts?' });
+    if (!picked) return;
+    this.filter = picked.filter;
+    await this.extensionContext.workspaceState.update(FILTER_KEY, picked.filter);
+    this.showFilter();
+    this._onDidChangeTreeData.fire();
+  }
+
+  private partShown(group: string, index: string, part: number): boolean {
+    if (this.filter === 'all' || !this.provider) return true;
+    const solved = getSolvedParts(this.extensionContext.workspaceState, this.provider, { group, index, part }).includes(part);
+    return this.filter === 'solved' ? solved : !solved;
+  }
+
+  private questShown(group: string, index: string): boolean {
+    if (this.filter === 'all' || !this.provider) return true;
+    const max = maxPartFor(this.provider, { group, index, part: 1 });
+    return Array.from({ length: max }, (_, i) => i + 1).some((part) => this.partShown(group, index, part));
+  }
 
   async refresh(): Promise<void> {
     await this.rescan();
@@ -66,8 +118,8 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
   private async rescan(): Promise<void> {
     const editor = vscode.window.activeTextEditor;
-    this.folder =
-      (editor && vscode.workspace.getWorkspaceFolder(editor.document.uri)) ?? vscode.workspace.workspaceFolders?.[0];
+    const file = editor && editorFileUri(editor.document);
+    this.folder = (file && vscode.workspace.getWorkspaceFolder(file)) ?? vscode.workspace.workspaceFolders?.[0];
     const siteId = this.folder ? peekSite(this.folder) : undefined;
     this.provider = siteId ? providers[siteId] : undefined;
     this.quests.clear();
@@ -76,7 +128,8 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     if (!this.provider || !this.folder) return;
 
     const files = await vscode.workspace.findFiles(
-      new vscode.RelativePattern(this.folder, '**/*.py'),
+      // .rules: Everybody Codes GridOS programs (core/gridos.ts), alongside Python solutions.
+      new vscode.RelativePattern(this.folder, '**/*.{py,rules}'),
       new vscode.RelativePattern(this.folder, '**/{.venv,node_modules,__pycache__}/**')
     );
     for (const file of files) {
@@ -109,7 +162,8 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         vscode.TreeItemCollapsibleState.Collapsed
       );
       const ctx: PuzzleContext = { group: node.group, index: node.index, part: 1 };
-      item.contextValue = canRunSolver(this.provider, ctx, node.filePath)
+      const gridos = this.provider.id === 'everybodycodes' && isGridosGroup(node.group);
+      item.contextValue = gridos || canRunSolver(this.provider, ctx, node.filePath)
         ? 'puzzleSubmitter.quest'
         : 'puzzleSubmitter.quest.readonly';
       item.resourceUri = vscode.Uri.file(node.filePath);
@@ -126,7 +180,10 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     const item = new vscode.TreeItem(`Part ${node.part}`, vscode.TreeItemCollapsibleState.None);
     item.iconPath = this.iconFor(result);
     item.description = this.descriptionFor(result);
-    item.contextValue = this.provider.submit ? 'puzzleSubmitter.part' : 'puzzleSubmitter.part.readonly';
+    // Submitting from the tree runs solver() for an answer — not for parts without one
+    // (GridOS programs are submitted from the panel, where their scores are shown).
+    const runnable = this.provider.supportsRunner?.({ group: node.group, index: node.index, part: node.part }) ?? true;
+    item.contextValue = this.provider.submit && runnable ? 'puzzleSubmitter.part' : 'puzzleSubmitter.part.readonly';
     return item;
   }
 
@@ -134,11 +191,14 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     if (!this.provider) return [];
 
     if (!node) {
-      return this.sortGroups([...this.quests.keys()]).map((group) => ({ kind: 'event', group }) satisfies TreeNode);
+      return this.sortGroups([...this.quests.keys()])
+        .filter((group) => [...(this.quests.get(group)?.keys() ?? [])].some((index) => this.questShown(group, index)))
+        .map((group) => ({ kind: 'event', group }) satisfies TreeNode);
     }
     if (node.kind === 'event') {
       const perGroup = this.quests.get(node.group) ?? new Map<string, QuestEntry>();
       return [...perGroup.entries()]
+        .filter(([index]) => this.questShown(node.group, index))
         .sort((a, b) => Number(a[0]) - Number(b[0]))
         .map(([index, entry]) => ({ kind: 'quest', group: node.group, index, filePath: entry.filePath }) satisfies TreeNode);
     }
@@ -147,7 +207,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       return Array.from(
         { length: max },
         (_, i) => ({ kind: 'part', group: node.group, index: node.index, part: i + 1, filePath: node.filePath }) satisfies TreeNode
-      );
+      ).filter((part) => this.partShown(node.group, node.index, part.part));
     }
     return [];
   }
@@ -281,7 +341,8 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     if (!this.provider || !this.folder) return;
     const provider = this.provider;
     const fetchRecordedAnswers = provider.fetchRecordedAnswers;
-    if (!fetchRecordedAnswers) {
+    const fetchPublishedAnswers = provider.fetchPublishedAnswers;
+    if (!fetchRecordedAnswers && !fetchPublishedAnswers) {
       vscode.window.showInformationMessage(
         `${provider.label} has no known way to read back already-solved answers from the site.`
       );
@@ -290,8 +351,9 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     const perGroup = this.quests.get(node.group) ?? new Map<string, QuestEntry>();
     if (perGroup.size === 0) return;
 
-    const token = await requireToken(this.extensionContext.secrets, provider);
-    if (!token) return;
+    // Published answers (the same for everyone) need no account.
+    const token = fetchRecordedAnswers ? await requireToken(this.extensionContext.secrets, provider) : '';
+    if (token === undefined || (fetchRecordedAnswers && !token)) return;
     const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
     const label = this.groupLabel(node.group);
     const indexes = [...perGroup.keys()].sort((a, b) => Number(a) - Number(b));
@@ -307,6 +369,14 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
           const index = indexes[i];
           const ctx: PuzzleContext = { group: node.group, index, part: 1 };
           try {
+            if (!fetchRecordedAnswers) {
+              const published = await fetchPublishedAnswers!(ctx, contact);
+              if (published.length && !getPublishedAnswer(this.extensionContext.workspaceState, provider, ctx, 1)) filled++;
+              found += published.length;
+              await storePublishedAnswers(this.extensionContext.workspaceState, provider, ctx, published);
+              progress.report({ message: `${provider.itemNoun} ${index} (${i + 1}/${indexes.length})`, increment: 100 / indexes.length });
+              continue; // one page for all of them — no pause needed
+            }
             const answers = await fetchRecordedAnswers(ctx, token, contact);
             for (let p = 0; p < answers.length; p++) {
               const part = p + 1;
@@ -336,7 +406,11 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
     this._onDidChangeTreeData.fire();
     if (!aborted) {
-      vscode.window.showInformationMessage(`${label}: found ${found} recorded answer(s) on ${provider.label} (${filled} new).`);
+      vscode.window.showInformationMessage(
+        fetchRecordedAnswers
+          ? `${label}: found ${found} recorded answer(s) on ${provider.label} (${filled} new).`
+          : `${label}: found ${found} published answer(s) for ${provider.label} (${filled} new) — Run All Quests checks your solutions against them.`
+      );
     }
   }
 
@@ -373,7 +447,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       return;
     }
 
-    const needsNetwork = Boolean(provider.fetchInput || provider.fetchRecordedAnswers);
+    const needsNetwork = Boolean(provider.fetchInput || provider.fetchRecordedAnswers || provider.fetchExamples);
     let token: string | undefined;
     if (needsNetwork) {
       token = await requireToken(this.extensionContext.secrets, provider);
@@ -416,6 +490,14 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             await sleep(300);
           }
 
+          if (provider.fetchPublishedAnswers && getPublishedAnswer(state, provider, ctx, 1) === undefined) {
+            try {
+              await storePublishedAnswers(state, provider, ctx, await provider.fetchPublishedAnswers(ctx, contact));
+            } catch (error) {
+              log(`Sync: published answers unavailable for ${group} ${index}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          }
+
           if (token && provider.fetchRecordedAnswers) {
             const stillMissing = Array.from({ length: maxPartFor(provider, ctx) }, (_, p) => p + 1).some(
               (part) => getRecordedAnswer(state, provider, ctx, part) === undefined
@@ -438,6 +520,22 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
                   aborted = true;
                   return;
                 }
+              }
+              await sleep(300);
+            }
+          }
+
+          // Examples for every part visible on the site — part 1, plus each part whose
+          // previous part is now recorded solved (the reference fetch above just filled
+          // that in). Cached ones aren't fetched again until another part unlocks.
+          if (token && provider.fetchExamples && canRunSolver(provider, ctx, filePath)) {
+            const visibleParts = Math.min(maxPartFor(provider, ctx), getSolvedParts(state, provider, ctx).length + 1);
+            if (needsExampleFetch(readExamples(folder, provider.id, ctx), visibleParts)) {
+              try {
+                await fetchAndCacheExamples(provider, ctx, folder, token, contact);
+                anyNetworkSucceeded = true;
+              } catch (error) {
+                log(`Sync: example fetch failed for ${group} ${index}: ${error instanceof Error ? error.message : String(error)}`);
               }
               await sleep(300);
             }
@@ -582,7 +680,10 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     for (let part = 1; part <= max; part++) {
       if (cancelToken?.isCancellationRequested) break;
       const ctx: PuzzleContext = { group, index, part };
-      const result = canRunSolver(this.provider, ctx, filePath)
+      const gridos = this.provider.id === 'everybodycodes' && isGridosGroup(group);
+      const result = gridos
+        ? benchmarkGridosPart(this.provider, ctx, filePath, this.folder)
+        : canRunSolver(this.provider, ctx, filePath)
         ? await benchmarkPart(
             this.provider,
             ctx,
@@ -640,11 +741,14 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
               provider.solverInputShape,
               node.part,
               folder.uri.fsPath,
-              resolveSolverTimeoutSeconds(folder)
+              resolveSolverTimeoutSeconds(folder),
+              undefined,
+              undefined,
+              askForSolverInput
             );
             return parts[node.part - 1] ?? parts[0];
           } catch (error) {
-            await showSolverError(error);
+            showSolverError(error);
             return undefined;
           }
         }

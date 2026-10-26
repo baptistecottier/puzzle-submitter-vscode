@@ -20,6 +20,26 @@ export interface SubmitResult {
  * every provider reads/writes, regardless of how each site's own API/UI hands it out. */
 export type PuzzleInputParts = Record<string, string>;
 
+/** One worked example from a puzzle's prose, in aocd's own Example shape (aocd's
+ * Example tuple: input_data, answer_a, answer_b, extra). Answers are per part: answer_a for part 1, answer_b for part 2. */
+export interface PuzzleExample {
+  input_data: string;
+  answer_a?: string;
+  answer_b?: string;
+  /** Part 3's answer — not in aocd's shape (AoC has two parts), used by Everybody Codes. */
+  answer_c?: string;
+  /** Extra context some examples need (e.g. fewer iterations than the real input) —
+   * not passed to solver(), only shown next to a failing result as a hint. */
+  extra?: Record<string, unknown>;
+}
+
+/** What a site's description showed when examples were fetched: the examples, and how
+ * many parts' text was visible (later parts unlock as earlier ones are solved). */
+export interface FetchedExamples {
+  examples: PuzzleExample[];
+  parts: number;
+}
+
 /** How a site's real solver(data) expects to receive PuzzleInputParts once loaded. */
 export type SolverInputShape =
   | 'text' // solver(data: str) — data is the single relevant part's text (aoc, codyssi, i18n-puzzles, codingquest)
@@ -66,9 +86,20 @@ export interface PuzzleProvider {
    * without re-submitting (which would just get "already solved" back, with no answer
    * text) or trusting whatever the current solver happens to output. */
   fetchRecordedAnswers?(ctx: PuzzleContext, token: string, contact: string): Promise<string[]>;
+  /** Only for sites whose answers are the same for everyone and published openly
+   * (codingquest). They're a reference to check against — unlike fetchRecordedAnswers,
+   * which reads back what *you* solved, having one doesn't mean the part is solved (see
+   * core/publishedAnswers.ts). No token. Answers in part order. */
+  fetchPublishedAnswers?(ctx: PuzzleContext, contact: string): Promise<string[]>;
   /** Set on every site: how its solver(data) wants PuzzleInputParts shaped. Presence of
    * this field is what enables the "Run solver() from this file" runner. */
   solverInputShape?: SolverInputShape;
+  /** Only implemented where a puzzle's worked examples (input + expected answers) can be
+   * located in its description: aoc (aocd's per-puzzle locators) and everybodycodes (see
+   * providers/ecExamples.ts). Enables "Fetch Examples" and caching them on Sync —
+   * "Run on Examples" itself works on any site with examples added to the cache by hand
+   * (see core/examples.ts). */
+  fetchExamples?(ctx: PuzzleContext, token: string, contact: string): Promise<FetchedExamples>;
   /** Only needed when solverInputShape doesn't uniformly apply to everything a provider
    * detects (e.g. Everybody Codes' GridOS, which has no per-quest solver() at all).
    * Defaults to true (whenever solverInputShape is set) when a provider omits this. */

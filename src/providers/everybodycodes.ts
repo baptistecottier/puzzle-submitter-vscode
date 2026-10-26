@@ -1,14 +1,46 @@
 import * as crypto from 'node:crypto';
-import { PuzzleContext, PuzzleInputParts, PuzzleProvider, SubmitResult } from '../types';
+import { PuzzleContext, PuzzleExample, PuzzleInputParts, PuzzleProvider, SubmitResult } from '../types';
+import { extractEcExamples } from './ecExamples';
 
 // Detection + the fetch/decrypt pipeline below are ported from this project's own
 // working scripts/get_cases.py (everybodycodes repo) — that script is the source of
 // truth for these endpoints, not guesswork.
 const EVENTS_RE = /events\/year_(\d{4})\/solutions\/quest_(\d{2})/;
 const STORIES_RE = /stories\/story_(\d{2})\/solutions\/quest_(\d{2})/;
-// GridOS has no per-quest solver() — quest_N/ holds .rules/test-case data for a shared
-// rule engine (gridOS.py), not solution code — see the "supportsRunner" check below.
-const GRIDOS_RE = /gridos\/gridos_(\d+)\/quest_(\d+)/;
+// GridOS quests are rules programs (.rules files, one per part folder, part_I/II/III), run by
+// the extension's own GridOS engine (core/gridos.ts) — not by a Python solver(). On the
+// site, GridOS N is event 3000 + N.
+const GRIDOS_RE = /gridos\/gridos_(\d+)\/quest_(\d+)(?:\/part_(I{1,3}))?/;
+const GRIDOS_EVENT_OFFSET = 3000;
+
+/** GridOS tournaments are events 3001, 3002, … on the site. */
+export function isGridosGroup(group: string): boolean {
+  return /^30\d\d$/.test(group);
+}
+
+/** Pure so it can be unit tested without a network call. A GridOS part's recorded
+ * "answer" is the JSON of your best scores ({"heads":1,"states":200,…}), the way the
+ * site itself reads it back. */
+export function parseGridosBest(answer: string | undefined): Record<string, number> | undefined {
+  if (!answer) return undefined;
+  try {
+    const parsed = JSON.parse(answer);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, number>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Submits a GridOS program for one part — the endpoint the site's own simulator posts to
+ * once every test passes. The server runs it again and keeps your best of each score. */
+export async function submitGridosProgram(ctx: PuzzleContext, token: string, program: string): Promise<SubmitResult> {
+  const response = await fetch(`https://api.everybody.codes/event/${ctx.group}/quest/${ctx.index}/part/${ctx.part}/answerQos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookieHeader(token) },
+    body: JSON.stringify({ rules: program }),
+  });
+  return parseSubmitBody(response.status, await response.text());
+}
 
 function cookieHeader(token: string): string {
   return `everybody-codes=${token}`;
@@ -28,16 +60,30 @@ async function ecFetch(url: string, token: string, init: RequestInit = {}): Prom
   return response;
 }
 
-async function getSeed(token: string): Promise<number> {
-  const response = await ecFetch('https://api.everybody.codes/user/me', token);
-  const data = (await response.json()) as { seed: number };
-  return data.seed;
+/** Pure so it can be unit tested without a network call. Everybody Codes never rejects
+ * an expired or invalid session cookie: it answers 200 as if logged out — /user/me with
+ * "id": null and no seed, a quest with only its public key1 — confirmed from real
+ * responses. Unchecked, an expired token silently looked like "only part 1 exists"
+ * (part 1's input/examples only, no reference answers), so this turns it into an error. */
+export function signedInSeed(me: { id?: unknown; seed?: unknown }): number {
+  if (me.id === null || me.id === undefined || typeof me.seed !== 'number') {
+    throw new Error(
+      'Everybody Codes doesn\'t recognize the session token — it has probably expired. Set a new one with "Set Token for Current Site".'
+    );
+  }
+  return me.seed;
 }
 
-async function fetchEncryptedInputs(ctx: PuzzleContext, token: string): Promise<Record<string, string>> {
+/** The user's input seed — and, every time, the check that the token is still signed in. */
+async function fetchSeed(token: string): Promise<number> {
+  const response = await ecFetch('https://api.everybody.codes/user/me', token);
+  return signedInSeed((await response.json()) as { id?: unknown; seed?: unknown });
+}
+
+async function fetchEncryptedInputs(ctx: PuzzleContext, seed: number, token: string): Promise<Record<string, string>> {
   const url = ctx.group.startsWith('30')
     ? `https://everybody.codes/assets/${ctx.group}/${ctx.index}/input.json`
-    : `https://everybody.codes/assets/${ctx.group}/${ctx.index}/input/${await getSeed(token)}.json`;
+    : `https://everybody.codes/assets/${ctx.group}/${ctx.index}/input/${seed}.json`;
   const response = await ecFetch(url, token);
   return (await response.json()) as Record<string, string>;
 }
@@ -123,7 +169,7 @@ export const everybodyCodesProvider: PuzzleProvider = {
     "Value of the 'everybody-codes' cookie from everybody.codes — log in, open dev tools → Application/Storage → Cookies.",
 
   groupLabel(group) {
-    if (group.startsWith('gridos-')) return `GridOS ${group.slice('gridos-'.length)}`;
+    if (isGridosGroup(group)) return `GridOS ${Number(group) - GRIDOS_EVENT_OFFSET}`;
     // Yearly events use a plain 4-digit year; stories use a plain, small story number —
     // never confirmed to collide in practice (AoC/EC years are always 4 digits).
     return /^\d{4}$/.test(group) ? group : `Story ${group}`;
@@ -134,7 +180,7 @@ export const everybodyCodesProvider: PuzzleProvider = {
   // category first, in the same order the site's own nav uses (Events, Stories, GridOS),
   // then by number within each.
   groupSortKey(group) {
-    if (group.startsWith('gridos-')) return `2_${group.slice('gridos-'.length).padStart(6, '0')}`;
+    if (isGridosGroup(group)) return `2_${group.padStart(6, '0')}`;
     if (/^\d{4}$/.test(group)) return `0_${group}`;
     return `1_${group.padStart(6, '0')}`;
   },
@@ -152,22 +198,22 @@ export const everybodyCodesProvider: PuzzleProvider = {
     }
     const gridos = GRIDOS_RE.exec(relativeFilePath);
     if (gridos) {
-      // Browsable (tree, status bar, ...) but not runnable/submittable — see
-      // supportsRunner below and the README: GridOS has no per-quest solver() and no
-      // confirmed submission endpoint, unlike yearly events/stories.
-      return { group: `gridos-${Number(gridos[1])}`, index: String(Number(gridos[2])), part: 1 };
+      return {
+        group: String(GRIDOS_EVENT_OFFSET + Number(gridos[1])),
+        index: String(Number(gridos[2])),
+        part: gridos[3] ? gridos[3].length : 1,
+      };
     }
     return undefined;
   },
 
   supportsRunner(ctx) {
-    return !ctx.group.startsWith('gridos-');
+    return !isGridosGroup(ctx.group);
   },
 
   puzzleUrl(ctx) {
-    if (ctx.group.startsWith('gridos-')) {
-      // No confirmed GridOS URL of any kind — the homepage is the only link I'm sure is real.
-      return 'https://everybody.codes/';
+    if (isGridosGroup(ctx.group)) {
+      return `https://everybody.codes/gridos/${Number(ctx.group) - GRIDOS_EVENT_OFFSET}/quests/${ctx.index}`;
     }
     // Confirmed base pattern only (event's quest list) — not deep-linked to a specific quest.
     return `https://everybody.codes/event/${ctx.group}/quests`;
@@ -187,7 +233,8 @@ export const everybodyCodesProvider: PuzzleProvider = {
   async fetchInput(ctx, token) {
     // The API hands back every unlocked part's encrypted blob/key in one response each —
     // decrypt whichever parts are actually available rather than just ctx.part.
-    const [inputs, keys] = await Promise.all([fetchEncryptedInputs(ctx, token), fetchKeys(ctx, token)]);
+    const seed = await fetchSeed(token);
+    const [inputs, keys] = await Promise.all([fetchEncryptedInputs(ctx, seed, token), fetchKeys(ctx, token)]);
     const parts: PuzzleInputParts = {};
     for (const part of [1, 2, 3]) {
       const encrypted = inputs[String(part)];
@@ -202,8 +249,32 @@ export const everybodyCodesProvider: PuzzleProvider = {
     return parts;
   },
 
+  // Each part's description is encrypted with that part's key (the same key as its
+  // input), so only unlocked parts' examples can be read — part 1's key is even handed
+  // out without logging in, the rest come with the token once the previous part is solved.
+  async fetchExamples(ctx, token) {
+    const [description, keys] = await Promise.all([
+      ecFetch(`https://everybody.codes/assets/${ctx.group}/${ctx.index}/description.json`, token).then(
+        (response) => response.json() as Promise<Record<string, string>>
+      ),
+      fetchKeys(ctx, token),
+      fetchSeed(token), // only to fail on an expired token instead of returning part 1 alone
+    ]);
+    const examples: PuzzleExample[] = [];
+    let parts = 0;
+    for (const part of [1, 2, 3] as const) {
+      const key = keys[`key${part}`];
+      const encrypted = description[String(part)];
+      if (!key || !encrypted) break;
+      examples.push(...extractEcExamples(decrypt(key, encrypted), `${ctx.group}/${ctx.index}`, part));
+      parts = part;
+    }
+    return { examples, parts };
+  },
+
   async fetchRecordedAnswers(ctx, token) {
-    return parseQuestAnswers(await fetchKeys(ctx, token));
+    const [keys] = await Promise.all([fetchKeys(ctx, token), fetchSeed(token)]);
+    return parseQuestAnswers(keys);
   },
 
   async submit(ctx, token, answer) {

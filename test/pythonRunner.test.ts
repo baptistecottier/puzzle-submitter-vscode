@@ -129,8 +129,21 @@ test("a generator-based solver (yield) is consumed into real values, not '<gener
     'day_07.py',
     'def solver(data):\n    n = int(data)\n    yield n\n    yield n * 2\n'
   );
-  const { parts } = await runPythonSolver('python3', solution, { '1': '5' }, 'text', 1, path.dirname(solution), 60);
+  const { parts } = await runPythonSolver('python3', solution, { '2': '5' }, 'text', 2, path.dirname(solution), 60);
   assert.deepEqual(parts, ['5', '10']);
+});
+
+test('a generator-based solver is only consumed up to the requested part, so part 2 code never runs during a part 1 run (examples often only have a part 1 answer)', async () => {
+  const solution = tmpFile(
+    'day_07.py',
+    'def solver(data):\n    yield len(data)\n    raise ValueError("part 2 not meant for this input")\n'
+  );
+  const { parts } = await runPythonSolver('python3', solution, { '1': 'abc' }, 'text', 1, path.dirname(solution), 60);
+  assert.deepEqual(parts, ['3']);
+  await assert.rejects(
+    runPythonSolver('python3', solution, { '2': 'abc' }, 'text', 2, path.dirname(solution), 60),
+    /part 2 not meant for this input/
+  );
 });
 
 test('a plain string result is kept as one part, not split into characters', async () => {
@@ -247,4 +260,84 @@ test('a solution using @dataclass at module level loads fine (needs the module r
   );
   const { parts } = await runPythonSolver('python3', solution, { '1': '5' }, 'text', 1, path.dirname(solution), 60);
   assert.deepEqual(parts, ['10']);
+});
+
+const exampleSolution = (body: string) => tmpFile('day_14.py', body);
+const runExample = (solution: string, input: string, example?: Record<string, unknown>) =>
+  runPythonSolver('python3', solution, { '1': input }, 'text', 1, path.dirname(solution), 60, undefined, example);
+
+test('an example run passes example=True to a solver that declares it — a real run never does', async () => {
+  const solution = exampleSolution('def solver(data, example=False):\n    return "example" if example else "real"\n');
+  assert.deepEqual((await runExample(solution, 'x', {})).parts, ['example']);
+  assert.deepEqual((await runExample(solution, 'x')).parts, ['real']);
+});
+
+test("EXAMPLE_PARAMS overrides a solver's real-value defaults on example runs only, and wins over the example's extra", async () => {
+  const solution = exampleSolution(
+    'EXAMPLE_PARAMS = {"w": 11, "h": 7}\n\ndef solver(robots, w=101, h=103):\n    return f"{w}x{h}"\n'
+  );
+  assert.deepEqual((await runExample(solution, 'x', { w: 5, width: 3 })).parts, ['11x7']);
+  assert.deepEqual((await runExample(solution, 'x')).parts, ['101x103']);
+});
+
+test("an example's extra values reach the parameters named like them; names a function doesn't declare are dropped", async () => {
+  const solution = exampleSolution('def solver(data, width=101):\n    return width\n');
+  assert.deepEqual((await runExample(solution, 'x', { width: 11, height: 7 })).parts, ['11']);
+});
+
+test('**kwargs receives every example parameter; preprocessing() gets them too', async () => {
+  const solution = exampleSolution(
+    'def preprocessing(data, example=False):\n    return (data, example)\n\ndef solver(data, flag, **params):\n    return f"{flag}:{sorted(params)}"\n'
+  );
+  assert.deepEqual((await runExample(solution, 'x', { steps: 10 })).parts, ["True:['example', 'steps']"]);
+});
+
+test("a parameter already filled positionally (tuple unpacking) isn't passed again by name", async () => {
+  const solution = exampleSolution(
+    'EXAMPLE_PARAMS = {"size": 7}\n\ndef preprocessing(data):\n    return (data, 70)\n\ndef solver(grid, size):\n    return size\n'
+  );
+  assert.deepEqual((await runExample(solution, 'x', {})).parts, ['70']);
+});
+
+const interactiveRun = (
+  solution: string,
+  onInput?: (prompt: string, newOutput: string) => Promise<string | undefined>,
+  timeoutSeconds = 60
+) => runPythonSolver('python3', solution, { '1': 'x' }, 'text', 1, path.dirname(solution), timeoutSeconds, undefined, undefined, onInput);
+
+test("input() in a non-interactive run fails at once with a clear message, instead of hanging until the timeout", async () => {
+  const solution = tmpFile('day_25.py', 'def solver(data):\n    return input("Command? ")\n');
+  const started = Date.now();
+  await assert.rejects(interactiveRun(solution, undefined, 30), /input\(\) isn't answered during Run All or Sync/);
+  assert.ok(Date.now() - started < 5000);
+});
+
+test('input() in an interactive run is answered by onInput, with the prompt and what was printed since the last question', async () => {
+  const solution = tmpFile(
+    'day_25.py',
+    'def solver(data):\n    print("You are in a room.")\n    a = input("Command? ")\n    print("You went " + a + ".")\n    b = input()\n    return a + "|" + b\n'
+  );
+  const asked: [string, string][] = [];
+  const replies = ['north', 'take key'];
+  const { parts, output } = await interactiveRun(solution, async (prompt, newOutput) => {
+    asked.push([prompt, newOutput]);
+    return replies.shift();
+  });
+  assert.deepEqual(parts, ['north|take key']);
+  assert.deepEqual(asked, [
+    ['Command? ', 'You are in a room.\n'],
+    ['', 'You went north.\n'],
+  ]);
+  assert.equal(output, 'You are in a room.\nYou went north.');
+});
+
+test('answering an input() with undefined (Escape) cancels the run', async () => {
+  const solution = tmpFile('day_25.py', 'def solver(data):\n    return input("Command? ")\n');
+  await assert.rejects(interactiveRun(solution, async () => undefined), /cancelled/);
+});
+
+test("the timeout doesn't count the time spent waiting for an input() reply", async () => {
+  const solution = tmpFile('day_25.py', 'def solver(data):\n    return input()\n');
+  const { parts } = await interactiveRun(solution, () => new Promise((resolve) => setTimeout(() => resolve('late'), 1500)), 1);
+  assert.deepEqual(parts, ['late']);
 });

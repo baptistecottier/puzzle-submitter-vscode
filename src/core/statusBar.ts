@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { editorFileUri } from './editorFile';
 import { PuzzleProvider } from '../types';
 import { providers } from '../providers';
 
@@ -15,8 +16,9 @@ export function getStatusBarItem(): vscode.StatusBarItem {
 /** Updates the status bar from the active editor, without prompting for anything unset. */
 export function refreshStatusBar(editor: vscode.TextEditor | undefined): void {
   const bar = getStatusBarItem();
-  const workspaceFolder = editor && vscode.workspace.getWorkspaceFolder(editor.document.uri);
-  if (!editor || !workspaceFolder) {
+  const file = editor && editorFileUri(editor.document);
+  const workspaceFolder = file && vscode.workspace.getWorkspaceFolder(file);
+  if (!file || !workspaceFolder) {
     bar.hide();
     return;
   }
@@ -30,8 +32,7 @@ export function refreshStatusBar(editor: vscode.TextEditor | undefined): void {
     return;
   }
 
-  const relativePath = vscode.workspace.asRelativePath(editor.document.uri, false);
-  const ctx = provider.detect(relativePath);
+  const ctx = provider.detect(vscode.workspace.asRelativePath(file, false));
   if (!ctx) {
     bar.text = `$(circle-slash) ${provider.label}`;
     bar.tooltip = 'Could not detect a puzzle from the active file — click to open the panel.';

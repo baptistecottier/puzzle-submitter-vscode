@@ -1,4 +1,7 @@
 import { PuzzleProvider, SiteId } from '../types';
+import { codingQuestPuzzleUrl, fetchCodingQuestAnswers, fetchCodingQuestInput } from './codingQuestAnswers';
+
+export { codingQuestPuzzleUrl };
 
 /**
  * Shared shape for sites with no known submission API: no fetchInput/submit, just
@@ -17,6 +20,8 @@ function createAssistProvider(config: {
   puzzleUrl: PuzzleProvider['puzzleUrl'];
   /** Omitted for sites with no real grouped-event structure (i18n-puzzles) — "New Event" won't offer them. */
   scaffoldPath?: PuzzleProvider['scaffoldPath'];
+  fetchPublishedAnswers?: PuzzleProvider['fetchPublishedAnswers'];
+  fetchInput?: PuzzleProvider['fetchInput'];
 }): PuzzleProvider {
   return {
     id: config.id,
@@ -32,6 +37,8 @@ function createAssistProvider(config: {
     },
     puzzleUrl: config.puzzleUrl,
     scaffoldPath: config.scaffoldPath,
+    fetchPublishedAnswers: config.fetchPublishedAnswers,
+    fetchInput: config.fetchInput,
   };
 }
 
@@ -71,13 +78,15 @@ export const codingQuestProvider = createAssistProvider({
   // placeholder receives e.g. "challenge_2024" here, not a bare year.
   group: (m) => `${m[1]}_${m[2]}`,
   index: (m) => String(Number(m[3])),
-  // codingquest.io problem pages use a flat global number unrelated to year/day, which
-  // isn't derivable from the local folder layout — links to the homepage instead.
-  puzzleUrl: () => 'https://codingquest.io',
+  // codingquest.io is gone; the event lives on in its author's archive, one page per day.
+  puzzleUrl: codingQuestPuzzleUrl,
   // group already includes the challenge/practice prefix (e.g. "challenge_2024"), so
   // "New Event"'s name prompt for this site asks for exactly that combined form.
   scaffoldPath: (ctx) => {
     const day = ctx.index.padStart(2, '0');
     return `events/${ctx.group}/day_${day}/day_${day}.py`;
   },
+  // Inputs and answers are the same for everyone, and published in the event's archive.
+  fetchPublishedAnswers: fetchCodingQuestAnswers,
+  fetchInput: fetchCodingQuestInput,
 });

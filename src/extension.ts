@@ -15,9 +15,13 @@ import { ensureLocalInput } from './core/ensureInput';
 import { readLocalInput, siteInputPath, writeLocalInput } from './core/localInput';
 import { nextUnsolvedPart } from './core/progress';
 import { guardSubmit } from './core/submitGuard';
+import { checkWithoutSubmitting } from './core/publishedAnswers';
 import { recordSubmitResult, describeSubmitResult } from './core/submitRecorder';
 import { getStatusBarItem, refreshStatusBar } from './core/statusBar';
-import { getOutputChannel, log, showSolverError } from './core/output';
+import { askForSolverInput, getOutputChannel, log, showSolverError } from './core/output';
+import { editorFileUri } from './core/editorFile';
+import { isGridosGroup } from './providers/everybodycodes';
+import { registerInputDocuments } from './core/inputDocument';
 
 let panelProvider: PuzzleSubmitterViewProvider | undefined;
 let treeProvider: PuzzleTreeProvider | undefined;
@@ -28,7 +32,8 @@ function requireWorkspaceEditor(): { editor: vscode.TextEditor; folder: vscode.W
     vscode.window.showErrorMessage('Puzzle Submitter: open a solution file first.');
     return undefined;
   }
-  const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+  const file = editorFileUri(editor.document);
+  const folder = file && vscode.workspace.getWorkspaceFolder(file);
   if (!folder) {
     vscode.window.showErrorMessage('Puzzle Submitter: the active file must be inside an open workspace folder.');
     return undefined;
@@ -39,7 +44,8 @@ function requireWorkspaceEditor(): { editor: vscode.TextEditor; folder: vscode.W
 /** Best-effort workspace folder for commands invoked without a relevant active editor (token management). */
 function activeOrFirstFolder(): vscode.WorkspaceFolder | undefined {
   const active = vscode.window.activeTextEditor;
-  return (active && vscode.workspace.getWorkspaceFolder(active.document.uri)) ?? vscode.workspace.workspaceFolders?.[0];
+  const file = active && editorFileUri(active.document);
+  return (file && vscode.workspace.getWorkspaceFolder(file)) ?? vscode.workspace.workspaceFolders?.[0];
 }
 
 /** Lets the user accept (Enter) or override the guessed part — only asked when there's
@@ -62,8 +68,8 @@ async function resolveContext(
   editor: vscode.TextEditor,
   workspaceState: vscode.Memento
 ): Promise<PuzzleContext | undefined> {
-  const relativePath = vscode.workspace.asRelativePath(editor.document.uri, false);
-  const detected = provider.detect(relativePath);
+  const file = editorFileUri(editor.document);
+  const detected = file && provider.detect(vscode.workspace.asRelativePath(file, false));
   if (detected) {
     // detect() always returns part 1 as a structural placeholder. Guess the first part
     // this extension hasn't seen marked solved yet (it has no visibility into puzzles
@@ -102,7 +108,10 @@ async function runSolverForAnswer(
     provider.solverInputShape,
     ctx.part,
     folder.uri.fsPath,
-    resolveSolverTimeoutSeconds(folder)
+    resolveSolverTimeoutSeconds(folder),
+    undefined,
+    undefined,
+    askForSolverInput
   );
   return parts[ctx.part - 1] ?? parts[0];
 }
@@ -143,9 +152,20 @@ async function resolveAnswer(
     if (output === undefined) return undefined;
     return vscode.window.showInputBox({ title: `${label} (from ${choice.id === 'solver' ? 'solver()' : 'command output'} — edit if needed)`, value: output, ignoreFocusOut: true });
   } catch (error) {
-    await showSolverError(error);
+    showSolverError(error);
     return undefined;
   }
+}
+
+/** GridOS programs aren't answers: they're run and submitted from the panel, where their
+ * scores are shown. Points there instead, and says so. */
+async function redirectGridos(provider: PuzzleProvider, ctx: PuzzleContext): Promise<boolean> {
+  if (provider.id !== 'everybodycodes' || !isGridosGroup(ctx.group)) return false;
+  vscode.window.showInformationMessage(
+    'Puzzle Submitter: GridOS rules files are run and submitted from the Puzzle Submitter panel, where their scores are shown.'
+  );
+  await vscode.commands.executeCommand('puzzleSubmitter.panel.focus');
+  return true;
 }
 
 async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<void> {
@@ -159,16 +179,26 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
 
   const ctx = await resolveContext(provider, editor, context.workspaceState);
   if (!ctx) return;
+  if (await redirectGridos(provider, ctx)) return;
 
   const answer = await resolveAnswer(provider, ctx, editor, folder, context.secrets);
   if (!answer) return;
 
   if (!provider.submit) {
+    const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
+    const check = await checkWithoutSubmitting(context.workspaceState, provider, ctx, answer, contact);
     await vscode.env.clipboard.writeText(answer);
+    if (check === 'mismatch') {
+      vscode.window.showWarningMessage(`❌ "${answer}" doesn't match ${provider.label}'s published answer (copied anyway).`);
+      return;
+    }
     await vscode.env.openExternal(vscode.Uri.parse(provider.puzzleUrl(ctx)));
     vscode.window.showInformationMessage(
-      `${provider.label} has no submission API — answer "${answer}" copied to the clipboard, puzzle page opened.`
+      check === 'match'
+        ? `✅ "${answer}" matches ${provider.label}'s published answer — copied to the clipboard, puzzle page opened.`
+        : `${provider.label} has no submission API — answer "${answer}" copied to the clipboard, puzzle page opened.`
     );
+    void treeProvider?.refresh();
     return;
   }
 
@@ -272,6 +302,7 @@ async function runSolverCommand(context: vscode.ExtensionContext): Promise<void>
 
   const ctx = await resolveContext(provider, editor, context.workspaceState);
   if (!ctx) return;
+  if (await redirectGridos(provider, ctx)) return;
 
   if (!canRunSolver(provider, ctx, editor.document.uri.fsPath)) {
     vscode.window.showErrorMessage(`Puzzle Submitter: no solver() detected for this file — it needs preprocessing()/solver() and a cached or fetchable input.`);
@@ -284,7 +315,7 @@ async function runSolverCommand(context: vscode.ExtensionContext): Promise<void>
     await vscode.env.clipboard.writeText(output);
     vscode.window.showInformationMessage(`Puzzle Submitter: solver() result — "${output}" (copied to clipboard).`);
   } catch (error) {
-    await showSolverError(error);
+    showSolverError(error);
   }
 }
 
@@ -353,6 +384,8 @@ export function activate(context: vscode.ExtensionContext): void {
   panelProvider = view;
   const tree = new PuzzleTreeProvider(context);
   treeProvider = tree;
+  const treeView = vscode.window.createTreeView('puzzleSubmitter.tree', { treeDataProvider: tree });
+  tree.attach(treeView);
 
   const refreshAll = (editor?: vscode.TextEditor) => {
     refreshStatusBar(editor ?? vscode.window.activeTextEditor);
@@ -372,6 +405,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (site) refreshAll();
     }),
     vscode.commands.registerCommand('puzzleSubmitter.tree.refresh', () => tree.refresh()),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.filter', () => tree.pickFilter()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.sync', () => tree.syncWithSite()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.newEvent', () => tree.newEvent()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.benchmarkQuest', (node: TreeNode) => {
@@ -391,10 +425,12 @@ export function activate(context: vscode.ExtensionContext): void {
       return undefined;
     }),
     vscode.window.registerWebviewViewProvider('puzzleSubmitter.panel', view),
-    vscode.window.registerTreeDataProvider('puzzleSubmitter.tree', tree),
+    registerInputDocuments(),
+    treeView,
     getOutputChannel(),
     getStatusBarItem(),
     vscode.window.onDidChangeActiveTextEditor((editor) => refreshAll(editor)),
+    vscode.workspace.onDidSaveTextDocument((document) => view.onDidSave(document)),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('puzzleSubmitter.site')) refreshAll();
     })

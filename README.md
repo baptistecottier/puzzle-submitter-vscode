@@ -4,7 +4,9 @@ Submit puzzle answers to Advent of Code, Everybody Codes, Codyssi, i18n-puzzles 
 Coding Quest without leaving VS Code — works with a solution in any language (type or
 paste the answer, or point `puzzleSubmitter.runCommand` at any script that prints one),
 with an optional built-in runner for Python solutions specifically (see
-[Writing a Python solution](#writing-a-python-solution)).
+[Writing a Python solution](#writing-a-python-solution)). Everybody Codes' GridOS
+tournaments are covered too: your `.rules` programs run on the official test cases,
+scored exactly as on the site, and can be submitted from the panel (see [GridOS](#gridos)).
 
 <img src="media/demo.gif" alt="Puzzle Submitter sidebar panel and Puzzles tree" width="360">
 
@@ -20,14 +22,19 @@ with an optional built-in runner for Python solutions specifically (see
   have no known submission API, so answers are copied to the clipboard and the puzzle
   page opens instead.
 - **Fetches and caches input locally** for the two sites with an API (decrypting
-  Everybody Codes' input automatically); a manual "Set Input" from the clipboard covers
-  the rest, or overrides any of them.
+  Everybody Codes' input automatically), and for Coding Quest, whose inputs (the same for
+  everyone) are files in the event's archive. For the rest, paste the input into the panel's
+  input box, or use "Set Input" from the clipboard; either also overrides a fetched one.
 - **Runs a Python solution directly** — define `solver(data)` (and optionally
   `preprocessing(data)`) in the open `.py` file and it's called for you, no wrapper
   script needed. See [Writing a Python solution](#writing-a-python-solution). This is
   the one Python-specific piece of the extension — everything else (detection, fetching
   input, submitting) is language-agnostic; solving in something else just means typing
   the answer in, or wiring up `puzzleSubmitter.runCommand`.
+- **Runs and submits Everybody Codes GridOS programs** with a built-in port of the site's
+  own GridOS engine: every `.rules` file of a part, one per score you optimise, side by
+  side with heads/states/rules/steps/golf and your best scores on the site. See
+  [GridOS](#gridos).
 - **Checks against a recorded answer before submitting**, everywhere you can submit
   (command, panel, tree): if what you're about to submit already matches an
   answer this extension has confirmed correct, it's not sent again — the site would just
@@ -51,7 +58,9 @@ directly from [marketplace.visualstudio.com/items?itemName=baptistecottier.puzzl
    workspace's `.vscode/settings.json`). For aoc/everybodycodes, you'll also be asked
    for a session token (see [Where session tokens come from](#where-session-tokens-come-from)) —
    stored in VS Code's encrypted `SecretStorage`, never written to a file.
-4. Fetch or set the input, provide an answer, hit Submit.
+4. Fetch or set the input, provide an answer, hit Submit. For a GridOS quest, open one of
+   its `.rules` files instead: the panel fetches the part's test cases, runs your files
+   and submits them (see [GridOS](#gridos)).
 
 ## Writing a Python solution
 
@@ -88,22 +97,106 @@ or pointing `puzzleSubmitter.runCommand` at your own script.
   used as-is.
 - No `solver()` defined → a clear error message, not a cryptic traceback.
 
+**`input()`.** A solution that asks for input while it runs (like Advent of Code 2019
+day 25's text adventure) works whenever you're the one running it: the panel's solver,
+examples and re-run on save, **Run Python Solver**, or a tree part's **Submit**.
+Whatever it has printed so far appears in the "Puzzle Submitter" output channel, an
+input box asks for your reply, and Escape stops the run. The timeout doesn't count the
+time spent typing. Only the bulk runs (Run All Parts/Quests, Sync), which don't stop to
+ask on every puzzle, fail at once with a message saying so instead of hanging until the
+timeout.
+
+**Examples with their own parameters.** A puzzle's examples often use different values
+from the real input: a smaller grid, fewer steps, 5 repeats instead of 100. When
+running an example (see **Examples** under [Sidebar panel](#sidebar-panel)), and only
+then, `preprocessing()` and `solver()` also get these keyword arguments, each only if
+its signature declares that name (or has `**kwargs`):
+
+- `example=True`, for code that switches on a flag;
+- the example's `extra` values (filled in by aocd for some Advent of Code days, and
+  editable in the examples cache);
+- your own `EXAMPLE_PARAMS` dict, defined in the solution file, which wins over the other
+  two.
+
+So a solution that keeps the real values as defaults only needs one line:
+
+```python
+EXAMPLE_PARAMS = {"w": 11, "h": 7}   # the example's grid; the real one is 101 x 103
+
+def solver(robots, w=101, h=103):
+    ...
+```
+
 ## Sidebar panel
 
 Click the Puzzle Submitter icon in the Activity Bar for a form instead of the command
-palette:
+palette. On a GridOS `.rules` file it switches to a dedicated mode, described under
+[GridOS](#gridos); everything below is for answer puzzles.
 
 - Detected site, puzzle and part (with a dropdown to override the part).
-- Input status, with Fetch/Set buttons, and a preview of the *active puzzle's* cached
-  input only — never the rest of the site's file (see [Local input format](#local-input-format)) —
-  capped at 2000 characters with an "Open full input in a tab" link for anything longer.
-- An answer field, with "Run solver()"/"Run configured command" buttons to fill it. A
-  "Show prints" checkbox next to the solver button controls whether `print()` output
-  from `preprocessing()`/`solver()` (normally discarded) is written to the "Puzzle
-  Submitter" output channel, which is then shown. While a solver is running, the button
+- Input status, with a Fetch button where the site has an input API, and the *active puzzle's* cached input, never
+  the rest of the site's file (see [Local input format](#local-input-format)). It's
+  editable: fix it or paste an input straight in, then **Save input** (**Revert** drops
+  your edits). For Advent of Code, where both parts share one input, saving updates both.
+  **Open in a tab** (next to the input's status) shows it at full size in a read-only
+  tab beside your solution. The tab follows saves and re-fetches, and closing it never
+  asks to save. Inputs over 500,000 characters are shown read-only in the panel.
+- An answer field, with "Run"/"Run configured command" buttons to fill it. A
+  "Show prints" checkbox (on by default) next to **Run** controls whether `print()`
+  output from `preprocessing()`/`solver()` is written to the "Puzzle Submitter" output
+  channel, which is then shown. While a solver is running, the button
   becomes a "Cancel" you can click to kill it immediately, instead of waiting out
   `puzzleSubmitter.solverTimeoutSeconds`.
+- A **?** next to **Run** (which runs the file's `solver()`): hover it for what the solution file needs —
+  `preprocessing()`/`solver()`, what `data` holds on this site, how answers are returned,
+  `EXAMPLE_PARAMS` and `input()` (full details in
+  [Writing a Python solution](#writing-a-python-solution)).
+- **Run on save** (a checkbox next to the run buttons, off whenever a window opens):
+  saving the solution file repeats your last run, either the solver or the examples.
+  Before your first run, it runs the examples if the puzzle has some, otherwise the
+  solver. Saving during a run cancels it and starts again. These runs use only what's
+  cached (input, examples) and never contact the site, so saving often is fine. Their
+  result shows as a line in the panel rather than a notification on every save.
+- **Examples** (Python solutions, any site): **Run on Examples** runs `solver()` on
+  each worked example that has an answer for the selected part and shows ✅/❌/⚠️ per
+  example, next to the expected answer. For Advent of Code and Everybody Codes, the
+  examples are read from the puzzle description and cached in this workspace, beside
+  the inputs (see [Local input format](#local-input-format)), so each puzzle is
+  fetched once. **Run on Examples** fetches whatever isn't cached yet, and **Sync with
+  Site** fills the cache for every puzzle at once. It's built in and needs nothing
+  installed. Only the locations of examples are included in the extension, never
+  puzzle text: the examples are read from your own copy of the description, in line
+  with the sites' wish that puzzle content not be redistributed. A part's examples
+  only show up once the part before it is solved, because that's when the site shows
+  that part's text. The cache remembers how many parts were visible, so a puzzle is
+  fetched again only once another part has unlocked, and then only the new part's
+  examples are added. The panel's **Open** link opens the cache at the puzzle's entry,
+  for fixing an example a location got wrong; your fix is kept. **Fetch Examples**
+  re-reads the puzzle from scratch, and asks whether to keep your fixes when the cache
+  differs from the site.
+  - **Advent of Code** uses a port of
+    [aocd](https://github.com/wimglenn/advent-of-code-data)'s example parser, with its
+    hand-checked table of where each past puzzle's examples sit on the page (puzzles
+    newer than that table fall back to aocd's defaults: the first code block is the
+    input, the last highlighted value is the answer). `extra` is not passed to
+    `solver()`. It's only shown next to a failing example, as a hint that the example
+    needs different parameters (e.g. a smaller grid).
+  - **Everybody Codes** has no such parser to port, so the extension has its own: each
+    part's example notes are the input, and the answer is the last bold value in the
+    explanation that follows (skipping bolds that mark cells of a diagram, or that sit
+    in a list of other cases). A small table overrides this where a description puts
+    the answer elsewhere (in a table, say). A part with several notes gives several
+    examples, each answered by what follows it. Checked against all three parts of
+    every quest published so far (2024, 2025 and stories 1–3). Parts whose description
+    has no example of its own ("the same, on a bigger map") get none. Each part has its
+    own example notes, and `solver()` gets every part at once, so a part 2 example runs
+    as `{1: part 1's example, 2: part 2's example}`.
+  - On the other sites, examples you add to the cache by hand work the same way.
 - Submit, with the result shown inline.
+
+The panel stays on the last puzzle file you opened, with a link to it next to the site
+name: switching to another file (an input, the examples cache, a README), or closing
+every editor, doesn't reset it. Opening another puzzle's file moves it to that puzzle.
 
 The status bar item (bottom left) opens this panel when clicked. The panel only covers
 the common path — if a file can't be auto-detected, it falls back to the same "pick
@@ -113,9 +206,15 @@ manually" prompt the commands below use.
 
 The same Activity Bar container also has a **Puzzles** tree: every event/story/GridOS
 group found in the workspace, expanding to quests, expanding to parts — built by
-scanning the workspace for `.py` files the current site's provider recognizes (there's
-no "list all my puzzles" API to build this from instead).
+scanning the workspace for `.py` files (and GridOS `.rules` files) the current site's
+provider recognizes (there's no "list all my puzzles" API to build this from instead).
 
+- **Filter** (toolbar button at the top of the tree): show all puzzles, only the parts
+  still to solve, or only the solved ones. Quests and events stay visible when any of
+  their parts matches. The active filter appears next to the view's title and is
+  remembered per workspace. "Solved" means recorded as solved by this extension: a
+  correct submit, "Fetch Reference Answers from Site", or **Sync with Site**, which picks
+  up puzzles you solved elsewhere.
 - **New Event** (toolbar button at the top of the tree) — scaffolds a brand-new event:
   asks for a name (e.g. a year), what to call each sub-puzzle, and how many, then creates
   a `preprocessing()`/`solver()` stub for each, matching the active site's real folder
@@ -127,7 +226,9 @@ no "list all my puzzles" API to build this from instead).
   for i18n-puzzles (flat numbering, no event to name).
 - **Sync with Site** (toolbar button at the top of the tree) — the one-click version of
   everything below, across *every* event in the workspace at once, not just one: fetches
-  any missing input, fetches any missing reference answers, then benchmarks — skipping
+  any missing input, fetches any missing reference answers, caches examples for every
+  part you can see (see **Examples** under [Sidebar panel](#sidebar-panel)), then
+  benchmarks — skipping
   whatever's already cached, so re-running it later is cheap. This is what you want
   instead of clicking "Fetch Reference Answers" and "Run All Quests" separately for every
   year you've ever touched. Needs your session token if the site has any fetch API; sites
@@ -155,14 +256,57 @@ no "list all my puzzles" API to build this from instead).
   `answer1`/`answer2`/`answer3` in plain text. Either way, it works for puzzles solved
   outside this extension entirely — useful for backfilling reference answers for
   puzzles you solved before you had this extension, or before the benchmark existed.
-  AoC and Everybody Codes only (the other three have no submission API to read answers
-  back from either); needs your session token, and does one request per quest with a
-  short pause between them. You don't need to run this manually going forward, either:
+  AoC and Everybody Codes need your session token, and it does one request per quest
+  with a short pause between them. **Coding Quest** works too, without a token: its
+  answers are the same for everyone and published in the event's archive
+  ([pbaumgarten.com](https://pbaumgarten.com/course/6/topic/43/doc/321)), read in a
+  single request. They're kept as a reference rather than as solved: a part counts as
+  solved once your answer matches it (Run All, or the panel's copy button). You don't need to run this manually going forward, either:
   any submit that comes back "already solved" now does this same lookup automatically,
   so the reference answer fills in on its own the next time you happen to resubmit
   something already solved.
-- **GridOS** quests (`gridos/gridos_NN/quest_N/...`) show up for browsing only, with no
-  Run/Submit actions — see [Known limitations](#known-limitations).
+- **GridOS** quests (`gridos/gridos_NN/quest_N/part_I/...`): **Run All Parts** and
+  **Run All Quests** run every `.rules` file of each part on its cached official test
+  cases. A part gets ✓ with the best of each score among its files, or ⚠ naming the
+  first file that fails. **Sync with Site** fetches their test cases and recorded
+  scores too. See [GridOS](#gridos).
+
+## GridOS
+
+Everybody Codes' GridOS tournaments are rules programs for a grid machine, scored on
+heads, states, rules, steps and golf, rather than puzzles with an answer. Open a
+`.rules` file from a part folder (`gridos/gridos_NN/quest_N/part_I/`, `part_II`,
+`part_III`) and the panel switches to GridOS mode:
+
+- **Fetch tests** downloads the part's official test cases, the same encrypted per-part
+  data the site's simulator uses (GridOS N is event `3000 + N` there). Part 1 is open to
+  everyone; parts 2 and 3 need your token, once the part before is solved. They're
+  cached with your other inputs, and **Open in a tab** shows them laid out.
+- **Run all** runs every `.rules` file of the part folder side by side, on those cases.
+  This is the usual layout of one file per score being optimised: `q1p1_heads.rules`,
+  `q1p1_states.rules`, `q1p1_rules.rules`, `q1p1_steps.rules`. Each row shows whether
+  the file passes every case and its scores: **H** heads, **S** states used, **R** rules
+  used, **St** steps (summed over the cases), **G** golf (lines over five characters,
+  comments excluded). The score a file is named after is underlined, the best value of
+  each score is green, and ★ marks a value beating your best recorded on the site (the
+  last row). A failing file shows its first failing case and the site's own error
+  message ("Missing rule for state …"); the expected and actual grids go to the
+  "Puzzle Submitter" output channel.
+- **↑** submits a file through the same endpoint the site uses. Only a file passing
+  every case can be sent, and one that beats none of your recorded scores asks first.
+  Your best scores are read back afterwards.
+- **Run on save** runs the part's files again whenever you save one of them, without
+  contacting the site.
+
+The engine is a port of the site's own GridOS simulator, so a program passes, fails and
+scores exactly as on everybody.codes:
+
+- `//` comments; `/` as an extra separator; only a rule's first five columns read.
+- Exactly one rule must match each step: none or several is an error, and a program has
+  to reach `STOP`.
+- Writing `_` erases a cell, and two heads can't write different values to one cell.
+- Each test case's own start points and check (`EXACT`, `TEXT` or the part's validators).
+- The part's limits on bytes, heads, rules, states and steps.
 
 ## Commands
 
@@ -171,15 +315,20 @@ no "list all my puzzles" API to build this from instead).
   (the extension only knows what it's seen you submit itself, so it can guess wrong).
   Then it gets an answer — typed, from a configured command, or (on a `.py` file, any
   site) by running the file's own `preprocessing()`/`solver()` directly — and submits it.
-- **Puzzle Submitter: Fetch Input** — aoc/everybodycodes only. Downloads (and for
+- **Puzzle Submitter: Fetch Input** — aoc/everybodycodes, and Coding Quest from its
+  archive (no token; two days have no input file there: 2022 day 10's input is an image,
+  and 2024 day 8's numbers are in the puzzle text). Downloads (and for
   Everybody Codes, decrypts) every currently-unlocked part of the puzzle input in one go,
-  and never re-downloads a part already cached locally.
+  and never re-downloads a part already cached locally. On a GridOS file, that input is
+  the part's official test cases.
 - **Puzzle Submitter: Run Python Solver** — runs the active file's `preprocessing()`/
   `solver()` (see [Writing a Python solution](#writing-a-python-solution)) and copies the
   result to the clipboard, without going through the full Submit Answer flow.
+- On a GridOS `.rules` file, **Submit Answer** and **Run Python Solver** don't apply: they
+  open the panel, where GridOS programs are run and submitted.
 - **Puzzle Submitter: Set Input (from Clipboard)** — any site. Saves whatever's on the
   clipboard as this puzzle's local input, merged into the same cache "Fetch Input" uses.
-  The only way to get local input for codyssi/i18n-puzzles/coding quest (no fetch API),
+  The only way to get local input for codyssi/i18n-puzzles (no fetch API),
   and a manual override/correction for any site.
 - **Puzzle Submitter: Set Token for Current Site** / **Clear Token for Current Site** —
   setting a token, if this workspace already has cached input or recorded answers for
@@ -197,7 +346,7 @@ no "list all my puzzles" API to build this from instead).
 | `puzzleSubmitter.runCommand` | workspace | Optional shell command that prints an answer to stdout, offered as an alternative to typing it. Placeholders: `${year}`, `${day}`, `${part}`, `${file}`. The **last non-empty line of stdout** is used, then shown to you to confirm/edit before it's submitted. Generic — not wired up to this project's own `aocp`/`ec.py`/etc. scripts, since those print decorated multi-line/scoreboard output rather than a bare answer; point it at a script that prints just the answer, e.g. `python3 ${file}`. |
 | `puzzleSubmitter.contact` | global | Your email or GitHub URL, sent in the `User-Agent` of Advent of Code requests. AoC's documented automation etiquette asks scripts to identify themselves this way, so the site owner can reach you if something misbehaves. |
 | `puzzleSubmitter.pythonPath` | workspace | Interpreter used by "Run solver() from this file". Left unset, this workspace's `.venv/bin/python` is used if present, else `python3` on PATH. |
-| `puzzleSubmitter.solverTimeoutSeconds` | workspace | How long a single `preprocessing()`/`solver()` run is allowed before it's killed. Default `60`. Matters most for bulk runs (Run All Quests, Sync with Site), where one hung or infinite-looping solution shouldn't be able to stall the whole run. |
+| `puzzleSubmitter.solverTimeoutSeconds` | workspace | How long a single `preprocessing()`/`solver()` run is allowed before it's killed. Default `60`. Matters most for bulk runs (Run All Quests, Sync with Site), where one hung or infinite-looping solution shouldn't be able to stall the whole run. GridOS programs aren't affected: they stop at the part's own step limit, as on the site. |
 
 ## Where session tokens come from
 
@@ -215,6 +364,10 @@ no "list all my puzzles" API to build this from instead).
   verify current exact wording (no valid session), so treat `src/providers/aoc.ts`'s
   `parseAocResponse` as best-effort. An unrecognized response still surfaces its raw text
   in the "Puzzle Submitter" output channel instead of silently misreporting a status.
+- **Coding Quest** has no submission API either, but its answers are published, so the
+  panel's **Copy answer & open puzzle page** (and **Submit Answer**) first tells you
+  whether yours matches. A wrong answer is still copied, but the page isn't opened, and
+  a right one marks the part solved. 2024's tenth day has no published answer yet.
 - **Codyssi, i18n-puzzles, Coding Quest have no known submission API.** I looked (web
   search + inspecting the public pages) and found none, and this project's own scripts for
   these three never call the network either — they only validate locally. Submit Answer
@@ -235,15 +388,15 @@ no "list all my puzzles" API to build this from instead).
   story id is assumed to double as the API's `event` id — unverified, since this
   project's existing tooling only exercises yearly events. Yearly events
   (`events/year_YYYY/...`) are solid (see above).
-- **Everybody Codes GridOS** (`gridos/gridos_NN/quest_N/...`) has no known per-quest
-  `solver()` or submission endpoint — GridOS is a shared rule engine (`gridOS.py`) driven
-  by `.rules`/test-case files, not per-puzzle solution code. It's detected for browsing
-  in the [Puzzle tree](#puzzle-tree) only, with no Run/Submit actions.
+- **Everybody Codes GridOS submissions:** the endpoint and request are the site's own,
+  read from its JavaScript, but the shape of its response to a GridOS submission hasn't
+  been seen yet. The extension shows whatever message it returns, and reads your scores
+  back from the site after each submission.
 - **Codyssi's puzzle-page link** is the general challenges page, not a specific day —
   I couldn't confirm the per-day URL pattern.
-- **Coding Quest's puzzle-page link** is the homepage — the site's problem pages
-  (`codingquest.io/problem/{n}`) use a flat number unrelated to the year/day used
-  locally, so it can't be derived from a file path alone.
+- **Coding Quest's puzzle pages** live in the event's archive on pbaumgarten.com, since
+  codingquest.io is gone. Each day links to its own page there; a day the archive doesn't
+  have (2024's tenth) links to the archive's index.
 
 ## Development
 
@@ -253,8 +406,31 @@ no "list all my puzzles" API to build this from instead).
 3. Open one of your puzzle-site workspaces in that dev host window and use the extension
    as described above.
 4. `npm test` runs the unit tests (response parsing, local input storage, the Python
-   solver runner against real `python3` subprocesses); `npm run compile` type-checks and
-   bundles.
+   solver runner against real `python3` subprocesses, the example parsers, the GridOS
+   engine); `npm run compile` type-checks and bundles.
+
+### The GridOS engine
+
+`src/core/gridos.ts` is a port of the simulator in everybody.codes' own JavaScript
+bundle (`main.*.js`, the class that parses with `"Your program must start with HEADS
+instruction"`), along with how its simulator component adds up scores and its API
+service submits (`answerQos`). If the site changes GridOS's rules, re-read those parts
+of the bundle and update the port. A cheap check is to run a part's known-good `.rules`
+files and compare with the scores the site shows for them.
+
+### Updating the example locators
+
+`src/providers/aocExampleLocators.json` is
+[aocd-example-parser](https://github.com/wimglenn/aocd-example-parser)'s
+`aocd_example_parser/examples.json`, copied unchanged. To pick up a new event's puzzles,
+replace it with the copy from that project's latest release.
+
+`src/providers/ecExampleLocators.json` is this extension's own, keyed
+`"event/quest/part"`. Add an entry only where the default rule in
+`src/providers/ecExamples.ts` reads a part's example wrong. Each entry is a list of
+examples, each with optional `input_data`/`answer` expressions over the names listed at
+the top of that file. Leave a field out to keep the default, and use `{}` for an
+example the default already gets right.
 
 ### Local input format
 
@@ -268,3 +444,14 @@ one puzzle's input only ever touches that one `store[group][index]` entry — th
 panel's input preview, "Run solver()", etc. all resolve to just the active puzzle,
 never the whole file. See [Writing a Python solution](#writing-a-python-solution) for
 how `preprocessing()`/`solver()` consume this.
+
+A GridOS part's input is its official test data, cached as the JSON text the site
+encrypts: `{"limits": {"heads", "states", "rules", "steps", "bytes"}, "cases": [{"startPoints",
+"data", "expected", "validate"}, ...]}`, under the event's id (`"3001"` for GridOS 1).
+
+Examples are cached the same way, in `.puzzle-submitter/<site>-examples.json`:
+`{"<group>": {"<index>": {"parts": 2, "examples": [...]}}}`. Each example is in aocd's
+own `Example` shape, plus `answer_c` for a third part:
+`{"input_data": "...", "answer_a": "...", "answer_b": "...", "extra": {...}}`. `parts`
+is how many parts the site showed when they were fetched. To add examples by hand, for
+a site with nothing to fetch from, an entry can also be just the list of examples.

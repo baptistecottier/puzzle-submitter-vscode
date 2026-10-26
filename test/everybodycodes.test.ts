@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSubmitBody, parseQuestAnswers, everybodyCodesProvider } from '../src/providers/everybodycodes';
+import { parseSubmitBody, parseQuestAnswers, everybodyCodesProvider, signedInSeed, parseGridosBest } from '../src/providers/everybodycodes';
 
 test('409 means already solved (confirmed from real use)', () => {
   const result = parseSubmitBody(409, '{}');
@@ -60,9 +60,34 @@ test('parseQuestAnswers: nothing solved yet returns an empty list', () => {
 test('groupSortKey: years, stories and GridOS never interleave — a real reported bug', () => {
   // Plain lexicographic sort of these raw groups gives "1","2","2024","2025","3","4",
   // "gridos-1" -> Story 1, Story 2, 2024, 2025, Story 3, Story 4, GridOS 1 (interleaved).
-  const groups = ['1', '2', '2024', '2025', '3', '4', 'gridos-1'];
+  const groups = ['1', '2', '2024', '2025', '3', '4', '3001'];
   const sorted = [...groups].sort((a, b) =>
     everybodyCodesProvider.groupSortKey!(a).localeCompare(everybodyCodesProvider.groupSortKey!(b))
   );
-  assert.deepEqual(sorted, ['2024', '2025', '1', '2', '3', '4', 'gridos-1']);
+  assert.deepEqual(sorted, ['2024', '2025', '1', '2', '3', '4', '3001']);
+});
+
+test("signedInSeed: an expired/invalid token's logged-out /user/me (HTTP 200, id null — real response) is an error, not a silent partial fetch", () => {
+  assert.throws(() => signedInSeed({ id: null, name: null, serverTime: 1792153909575 } as { id: null }), /probably expired/);
+});
+
+test('signedInSeed: a signed-in /user/me gives its seed', () => {
+  assert.equal(signedInSeed({ id: 6053, seed: 41 }), 41);
+});
+
+test('GridOS files are GridOS N = event 3000 + N on the site, with the part from the part_I/II/III folder', () => {
+  const detect = everybodyCodesProvider.detect;
+  assert.deepEqual(detect('src/gridos/gridos_01/quest_3/part_II/q3p2_heads.rules'), { group: '3001', index: '3', part: 2 });
+  assert.deepEqual(detect('src/gridos/gridos_01/quest_3/part_III/q3p3_steps.rules'), { group: '3001', index: '3', part: 3 });
+  assert.deepEqual(detect('src/gridos/gridos_01/quest_5/postprocessing.py'), { group: '3001', index: '5', part: 1 });
+  const ctx = { group: '3001', index: '3', part: 2 };
+  assert.equal(everybodyCodesProvider.groupLabel!('3001'), 'GridOS 1');
+  assert.equal(everybodyCodesProvider.puzzleUrl(ctx), 'https://everybody.codes/gridos/1/quests/3');
+  assert.equal(everybodyCodesProvider.supportsRunner!(ctx), false);
+});
+
+test("parseGridosBest reads a GridOS part's recorded answer — the JSON of your best scores", () => {
+  assert.deepEqual(parseGridosBest('{"heads":1,"states":200,"rules":484,"steps":2620,"golf":6}'), { heads: 1, states: 200, rules: 484, steps: 2620, golf: 6 });
+  assert.equal(parseGridosBest('42'), undefined);
+  assert.equal(parseGridosBest(undefined), undefined);
 });

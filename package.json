@@ -1,7 +1,7 @@
 {
   "name": "puzzle-submitter",
   "displayName": "Puzzle Submitter",
-  "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code, with an optional Python solver() runner to fill in answers automatically.",
+  "description": "Submit answers to Advent of Code, Everybody Codes and other puzzle sites without leaving VS Code, with an optional Python solver() runner to fill in answers automatically, and Everybody Codes GridOS programs run, scored and submitted with the site's own rules.",
   "version": "0.4.0",
   "publisher": "baptistecottier",
   "license": "MIT",
@@ -25,6 +25,7 @@
     "advent of code",
     "aoc",
     "everybody codes",
+    "gridos",
     "codyssi",
     "i18n-puzzles",
     "coding quest",
@@ -66,6 +67,11 @@
         "command": "puzzleSubmitter.tree.refresh",
         "title": "Puzzle Submitter: Refresh Tree",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "puzzleSubmitter.tree.filter",
+        "title": "Puzzle Submitter: Filter Puzzles (All / Unsolved / Solved)",
+        "icon": "$(filter)"
       },
       {
         "command": "puzzleSubmitter.tree.sync",
@@ -130,6 +136,11 @@
         },
         {
           "command": "puzzleSubmitter.tree.sync",
+          "when": "view == puzzleSubmitter.tree",
+          "group": "navigation"
+        },
+        {
+          "command": "puzzleSubmitter.tree.filter",
           "when": "view == puzzleSubmitter.tree",
           "group": "navigation"
         },

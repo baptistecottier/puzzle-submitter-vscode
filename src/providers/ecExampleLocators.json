@@ -1,0 +1,21 @@
+{
+  "2/2/2": [
+    {"input_data": "notes[1]", "answer": "answers[1]"}
+  ],
+  "2024/5/1": [
+    {"answer": "pre[-1].split()[-1]"}
+  ],
+  "2024/7/2": [
+    {"input_data": "notes[0] + '\\n\\n' + notes[1]", "answer": "pre[-2]"}
+  ],
+  "2024/16/2": [
+    {"answer": "pre[-1].split()[-1]"}
+  ],
+  "2024/16/3": [
+    {"answer": "example.find_all('b')[-1].pre.text"}
+  ],
+  "2025/15/1": [
+    {"input_data": "page.find_all('pre')[2].text.strip()", "answer": "page.find_all('b')[21].text"},
+    {"input_data": "notes[0]", "answer": "answers[0]"}
+  ]
+}
