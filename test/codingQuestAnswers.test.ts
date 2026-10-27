@@ -13,10 +13,10 @@ const page = `<h1>Puzzle Solutions</h1>
 <tbody><tr><td>4 March 2024</td><td>Day one</td><td>191274</td></tr><tr><td>5 March 2024</td><td>Day two</td><td>258956/256237</td></tr></tbody></table>
 <h2>Notes</h2><table><tbody><tr><td>a</td><td>b</td><td>not an answer</td></tr></tbody></table>`;
 
-test("the archive's editions map to this extension's groups — the prequel is the practice track — answers by day", () => {
+test("the archive's editions map to this extension's groups — the prequel and one per challenge year — answers by day", () => {
   assert.deepEqual(Object.fromEntries(parseCodingQuestAnswers(page)), {
-    practice_2022: ['95', 'cookies'],
-    challenge_2024: ['191274', '258956/256237'],
+    prequel: ['95', 'cookies'],
+    '2024': ['191274', '258956/256237'],
   });
 });
 
@@ -27,7 +27,7 @@ function memento() {
 
 test("a published answer is only a reference: storing one doesn't mark the part solved", async () => {
   const state = memento();
-  const ctx = { group: 'challenge_2024', index: '2', part: 1 };
+  const ctx = { group: '2024', index: '2', part: 1 };
   await storePublishedAnswers(state, codingQuestProvider, ctx, ['258956/256237']);
   assert.deepEqual(referenceAnswer(state, codingQuestProvider, ctx, 1), { answer: '258956/256237', published: true });
   assert.deepEqual(getSolvedParts(state, codingQuestProvider, ctx), []);
@@ -35,7 +35,7 @@ test("a published answer is only a reference: storing one doesn't mark the part 
 
 test('an answer matching the published one (spaces aside) counts as solving the part; a wrong one does not', async () => {
   const state = memento();
-  const ctx = { group: 'challenge_2024', index: '1', part: 1 };
+  const ctx = { group: '2024', index: '1', part: 1 };
   await storePublishedAnswers(state, codingQuestProvider, ctx, ['191274']);
   assert.equal(await checkWithoutSubmitting(state, codingQuestProvider, ctx, '191275', ''), 'mismatch');
   assert.deepEqual(getSolvedParts(state, codingQuestProvider, ctx), []);
@@ -44,10 +44,10 @@ test('an answer matching the published one (spaces aside) counts as solving the 
 });
 
 test("Coding Quest's puzzle links point at each day's page in the archive", () => {
-  assert.equal(codingQuestPuzzleUrl({ group: 'challenge_2022', index: '1' }), 'https://pbaumgarten.com/course/6/topic/44/doc/286');
-  assert.equal(codingQuestPuzzleUrl({ group: 'challenge_2023', index: '10' }), 'https://pbaumgarten.com/course/6/topic/46/doc/310');
-  assert.equal(codingQuestPuzzleUrl({ group: 'practice_2022', index: '5' }), 'https://pbaumgarten.com/course/6/topic/45/doc/300');
-  assert.equal(codingQuestPuzzleUrl({ group: 'challenge_2024', index: '10' }), 'https://pbaumgarten.com/course/6/topic/43/doc/285');
+  assert.equal(codingQuestPuzzleUrl({ group: '2022', index: '1' }), 'https://pbaumgarten.com/course/6/topic/44/doc/286');
+  assert.equal(codingQuestPuzzleUrl({ group: '2023', index: '10' }), 'https://pbaumgarten.com/course/6/topic/46/doc/310');
+  assert.equal(codingQuestPuzzleUrl({ group: 'prequel', index: '5' }), 'https://pbaumgarten.com/course/6/topic/45/doc/300');
+  assert.equal(codingQuestPuzzleUrl({ group: '2024', index: '10' }), 'https://pbaumgarten.com/course/6/topic/43/doc/285');
 });
 
 test("a day's input is the text file its archive page links; a page without one has none", async () => {
@@ -55,4 +55,24 @@ test("a day's input is the text file its archive page links; a page without one 
   const withFile = '<nav><a href="/files/elsewhere.txt">x</a></nav><article><p><a href="/files/c6/t44/d286/1-2-may-2022.txt">1-2-May-2022.txt</a></p></article>';
   assert.equal(findCodingQuestInputLink(withFile), '/files/c6/t44/d286/1-2-may-2022.txt');
   assert.equal(findCodingQuestInputLink('<article><img src="/images/c6/t44/010-inputdata.png"></article>'), undefined);
+});
+
+test('Coding Quest folders are detected under the new names and the old ones alike', () => {
+  for (const [file, group] of [
+    ['events/2023/day_04/solver_04.py', '2023'],
+    ['events/prequel/day_02/solver_02.py', 'prequel'],
+    ['events/challenge_2023/day_04/solver_04.py', '2023'],
+    ['events/practice_2022/day_02/solver_02.py', 'prequel'],
+  ]) {
+    assert.equal(codingQuestProvider.detect(file)?.group, group, file);
+  }
+});
+
+test('an image input is found by its "inputdata" name, not the example image', async () => {
+  const { findCodingQuestInputImage } = await import('../src/providers/codingQuestAnswers.js');
+  const page =
+    '<article><img alt="x" src="/images/c6/t44/010-example-7426324724.png" />' +
+    '<img alt="y" src="/images/c6/t44/010-inputdata-327485957345.png" /></article>';
+  assert.equal(findCodingQuestInputImage(page), '/images/c6/t44/010-inputdata-327485957345.png');
+  assert.equal(findCodingQuestInputImage('<article><p>no images</p></article>'), undefined);
 });

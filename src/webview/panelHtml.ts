@@ -362,11 +362,12 @@ function render() {
     card.appendChild(el('div', { class: 'run-note ' + (state.saveRunNote.ok ? 'ok' : 'fail'), text: state.saveRunNote.text }));
   }
 
-  if (state.supportsSubmit) {
+  if (state.supportsSubmit || state.checksLocally) {
     card.appendChild(el('button', {
       class: 'primary',
       onclick: () => post({ type: 'submit', answer: draftAnswer }),
       text: 'Submit',
+      ...(state.checksLocally ? { title: 'Checked against the published answer' } : {}),
     }));
   } else {
     card.appendChild(el('button', {

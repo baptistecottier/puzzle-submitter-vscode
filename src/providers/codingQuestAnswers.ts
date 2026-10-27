@@ -1,4 +1,5 @@
-import { PuzzleContext, PuzzleInputParts } from '../types';
+import * as path from 'node:path';
+import { InputElsewhereError, PuzzleContext, PuzzleInputParts, SaveInputFile } from '../types';
 import { HtmlElement, parseHtml, textOf } from '../core/htmlTree';
 
 /** Coding Quest's answers are the same for every player, and its archive publishes them:
@@ -7,7 +8,7 @@ import { HtmlElement, parseHtml, textOf } from '../core/htmlTree';
 export const CODING_QUEST_SOLUTIONS_URL = 'https://pbaumgarten.com/course/6/topic/43/doc/321';
 
 /** Pure so it can be unit tested without a network call. Maps each edition to this
- * extension's group names — the prequel is the "practice" track, the rest "challenge" —
+ * extension's group names — "prequel", and the year for each challenge ("2022", …) —
  * and lists its answers by day (index 0 = day 1). */
 export function parseCodingQuestAnswers(html: string): Map<string, string[]> {
   const editions = new Map<string, string[]>();
@@ -18,7 +19,7 @@ export function parseCodingQuestAnswers(html: string): Map<string, string[]> {
       if (child.tag === 'h2') {
         const heading = /^(\d{4})\s+(prequel|challenge)$/i.exec(textOf(child).trim());
         current = heading ? [] : undefined;
-        if (heading) editions.set(`${heading[2].toLowerCase() === 'prequel' ? 'practice' : 'challenge'}_${heading[1]}`, current!);
+        if (heading) editions.set(heading[2].toLowerCase() === 'prequel' ? 'prequel' : heading[1], current!);
         continue;
       }
       if (child.tag === 'tr' && current) {
@@ -57,10 +58,10 @@ export async function fetchCodingQuestAnswers(ctx: PuzzleContext, contact: strin
 /** The archive's pages per edition: its topic, and the page of day 1 — the following days
  * are the next pages in order (2022 day 1 is topic 44, page 286; day 2 is page 287, …). */
 const CODING_QUEST_PAGES: Record<string, { topic: number; firstPage: number; days: number }> = {
-  practice_2022: { topic: 45, firstPage: 296, days: 5 },
-  challenge_2022: { topic: 44, firstPage: 286, days: 10 },
-  challenge_2023: { topic: 46, firstPage: 301, days: 10 },
-  challenge_2024: { topic: 47, firstPage: 311, days: 9 },
+  prequel: { topic: 45, firstPage: 296, days: 5 },
+  '2022': { topic: 44, firstPage: 286, days: 10 },
+  '2023': { topic: 46, firstPage: 301, days: 10 },
+  '2024': { topic: 47, firstPage: 311, days: 9 },
 };
 
 export function codingQuestPuzzleUrl(ctx: { group: string; index: string }): string {
@@ -90,16 +91,43 @@ export function findCodingQuestInputLink(html: string): string | undefined {
   return /href="(\/files\/[^"]+\.txt)"/.exec(article)?.[1];
 }
 
-/** The day's input, read from the file its archive page links. The same for everyone. */
-export async function fetchCodingQuestInput(ctx: PuzzleContext, _token: string, contact: string): Promise<PuzzleInputParts> {
+/** A page whose input is a picture (2022 day 10) shows it as an image named "…inputdata…",
+ * next to the example's "…example…" one. */
+export function findCodingQuestInputImage(html: string): string | undefined {
+  const article = html.slice(html.indexOf('<article'), html.indexOf('</article>'));
+  return /<img[^>]*src="(\/images\/[^"]*input[^"]*)"/i.exec(article)?.[1];
+}
+
+/** The day's input, read from the file its archive page links. The same for everyone. An
+ * image input (2022 day 10) is downloaded with saveFile, and its path is the input. */
+export async function fetchCodingQuestInput(
+  ctx: PuzzleContext,
+  _token: string,
+  contact: string,
+  saveFile?: SaveInputFile
+): Promise<PuzzleInputParts> {
   const page = codingQuestPuzzleUrl(ctx);
   if (!CODING_QUEST_PAGES[ctx.group] || page.endsWith('/doc/285')) {
     throw new Error(`The Coding Quest archive has no page for ${ctx.group} day ${ctx.index}.`);
   }
-  const link = findCodingQuestInputLink(await (await archiveFetch(page, contact)).text());
+  const html = await (await archiveFetch(page, contact)).text();
+  const link = findCodingQuestInputLink(html);
   if (!link) {
-    throw new Error(
-      `${ctx.group} day ${ctx.index} has no input file in the archive — its input is an image, or its numbers are in the puzzle text (${page}).`
+    const image = findCodingQuestInputImage(html);
+    if (image && saveFile) {
+      const data = new Uint8Array(await (await archiveFetch(ARCHIVE + image, contact)).arrayBuffer());
+      const day = ctx.index.padStart(2, '0');
+      return { '1': saveFile(`${ctx.group}-day_${day}${path.extname(image)}`, data) };
+    }
+    if (image) {
+      throw new InputElsewhereError(
+        `${ctx.group} day ${ctx.index}'s input is an image (${ARCHIVE + image}) — read it off and paste it into the input field.`,
+        [{ label: 'Open Image', url: ARCHIVE + image }, { label: 'Open Puzzle Page', url: page }]
+      );
+    }
+    throw new InputElsewhereError(
+      `${ctx.group} day ${ctx.index} has no input file in the archive — its numbers are in the puzzle text (${page}).`,
+      [{ label: 'Open Puzzle Page', url: page }]
     );
   }
   const text = await (await archiveFetch(ARCHIVE + link, contact)).text();

@@ -17,7 +17,7 @@ import { checkWithoutSubmitting } from '../core/publishedAnswers';
 import { recordSubmitResult, describeSubmitResult } from '../core/submitRecorder';
 import { promptManualContext } from '../core/manualContext';
 import { ensureLocalInput } from '../core/ensureInput';
-import { readLocalInput, siteInputPath, writeLocalInput } from '../core/localInput';
+import { inputFileSaver, readLocalInput, siteInputPath, writeLocalInput } from '../core/localInput';
 import {
   ExampleRun,
   expectedAnswer,
@@ -30,7 +30,7 @@ import {
   siteExamplesPath,
   writeExamples,
 } from '../core/examples';
-import { askForSolverInput, getOutputChannel, log, showSolverError } from '../core/output';
+import { askForSolverInput, getOutputChannel, log, showFetchError, showSolverError } from '../core/output';
 import { getWebviewHtml } from './panelHtml';
 import { GridosPanel, GridosPanelState } from './gridosPanel';
 
@@ -50,6 +50,9 @@ interface PanelState {
   inputPreview?: { text: string; fullLength: number; truncated: boolean };
   hasToken: boolean;
   supportsSubmit: boolean;
+  /** No submission API, but published answers to check against (Coding Quest): "Submit"
+   * judges the answer locally instead of copying it to paste on the site. */
+  checksLocally: boolean;
   supportsFetch: boolean;
   supportsSolver: boolean;
   /** How this site's solver() receives its input — the help card next to "Run" explains it. */
@@ -238,6 +241,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       inputCached: false,
       hasToken: false,
       supportsSubmit: false,
+      checksLocally: false,
       supportsFetch: false,
       supportsSolver: false,
       solverRunning: false,
@@ -270,6 +274,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
         : undefined,
       hasToken,
       supportsSubmit: Boolean(this.provider.submit),
+      checksLocally: !this.provider.submit && Boolean(this.provider.fetchPublishedAnswers),
       supportsFetch: Boolean(this.provider.fetchInput),
       supportsSolver,
       solverShape: this.provider.solverInputShape,
@@ -410,12 +415,12 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
     if (!token) return;
     const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
     try {
-      const parts = await this.provider.fetchInput(this.ctx, token, contact);
+      const parts = await this.provider.fetchInput(this.ctx, token, contact, inputFileSaver(folder, this.provider.id));
       writeLocalInput(folder, this.provider.id, this.ctx, parts);
       log(`Saved input to ${siteInputPath(this.provider.id)} (from panel)`);
       refreshInputDocuments();
     } catch (error) {
-      vscode.window.showErrorMessage(`Puzzle Submitter: ${error instanceof Error ? error.message : String(error)}`);
+      showFetchError(error);
     }
     await this.postState();
   }
@@ -727,15 +732,18 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
     if (!this.provider.submit) {
       const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
       const check = await checkWithoutSubmitting(this.extensionContext.workspaceState, this.provider, this.ctx, answer, contact);
-      await vscode.env.clipboard.writeText(answer);
-      if (check === 'mismatch') {
-        this.lastResult = { status: 'incorrect', message: `"${answer}" doesn't match the published answer (copied anyway).` };
+      if (check === 'match') {
+        this.lastResult = { status: 'correct', message: `✅ "${answer}" is the right answer.` };
+      } else if (check === 'mismatch') {
+        this.lastResult = { status: 'incorrect', message: `❌ "${answer}" is not the right answer.` };
       } else {
+        // Nothing to judge it by: hand it over for the site instead.
+        await vscode.env.clipboard.writeText(answer);
         await vscode.env.openExternal(vscode.Uri.parse(this.provider.puzzleUrl(this.ctx)));
-        this.lastResult =
-          check === 'match'
-            ? { status: 'correct', message: `"${answer}" matches the published answer — copied, puzzle page opened.` }
-            : { status: 'copied', message: `${this.provider.label} has no submission API — answer copied, puzzle page opened.` };
+        this.lastResult = {
+          status: 'copied',
+          message: `No published answer to check against — answer copied, puzzle page opened.`,
+        };
       }
       await this.postState();
       return;

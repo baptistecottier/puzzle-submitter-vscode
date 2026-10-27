@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SolverError } from './pythonRunner';
+import { InputElsewhereError } from '../types';
 
 let channel: vscode.OutputChannel | undefined;
 
@@ -30,6 +31,17 @@ export function showSolverError(error: unknown): void {
   log(error.detail);
   void vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`, 'Show Output').then((choice) => {
     if (choice === 'Show Output') getOutputChannel().show(true);
+  });
+}
+
+/** Shows an input fetch failure; when the input lives somewhere it can't be fetched from
+ * (an image), its links are buttons that open it. Not awaited, like showSolverError. */
+export function showFetchError(error: unknown, prefix = 'Puzzle Submitter: '): void {
+  const message = error instanceof Error ? error.message : String(error);
+  const links = error instanceof InputElsewhereError ? error.links : [];
+  void vscode.window.showErrorMessage(prefix + message, ...links.map((l) => l.label)).then((choice) => {
+    const link = links.find((l) => l.label === choice);
+    if (link) void vscode.env.openExternal(vscode.Uri.parse(link.url));
   });
 }
 

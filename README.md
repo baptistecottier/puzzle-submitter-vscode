@@ -261,7 +261,7 @@ provider recognizes (there's no "list all my puzzles" API to build this from ins
   answers are the same for everyone and published in the event's archive
   ([pbaumgarten.com](https://pbaumgarten.com/course/6/topic/43/doc/321)), read in a
   single request. They're kept as a reference rather than as solved: a part counts as
-  solved once your answer matches it (Run All, or the panel's copy button). You don't need to run this manually going forward, either:
+  solved once your answer matches it (Run All, or Submit). You don't need to run this manually going forward, either:
   any submit that comes back "already solved" now does this same lookup automatically,
   so the reference answer fills in on its own the next time you happen to resubmit
   something already solved.
@@ -316,8 +316,10 @@ scores exactly as on everybody.codes:
   Then it gets an answer — typed, from a configured command, or (on a `.py` file, any
   site) by running the file's own `preprocessing()`/`solver()` directly — and submits it.
 - **Puzzle Submitter: Fetch Input** — aoc/everybodycodes, and Coding Quest from its
-  archive (no token; two days have no input file there: 2022 day 10's input is an image,
-  and 2024 day 8's numbers are in the puzzle text). Downloads (and for
+  archive (no token; 2022 day 10's input is an image, downloaded to
+  `.puzzle-submitter/codingquest-files/2022-day_10.png` — your solver gets that path as its
+  input, relative to the workspace root, which is where solvers run; 2024 day 8 has no
+  input file, its numbers are in the puzzle text). Downloads (and for
   Everybody Codes, decrypts) every currently-unlocked part of the puzzle input in one go,
   and never re-downloads a part already cached locally. On a GridOS file, that input is
   the part's official test cases.
@@ -364,10 +366,11 @@ scores exactly as on everybody.codes:
   verify current exact wording (no valid session), so treat `src/providers/aoc.ts`'s
   `parseAocResponse` as best-effort. An unrecognized response still surfaces its raw text
   in the "Puzzle Submitter" output channel instead of silently misreporting a status.
-- **Coding Quest** has no submission API either, but its answers are published, so the
-  panel's **Copy answer & open puzzle page** (and **Submit Answer**) first tells you
-  whether yours matches. A wrong answer is still copied, but the page isn't opened, and
-  a right one marks the part solved. 2024's tenth day has no published answer yet.
+- **Coding Quest** has no submission API either, but its answers are published, so
+  **Submit** (panel or command) checks your answer against the published one right away
+  and tells you whether it's right. A right one marks the part solved. 2024's tenth day
+  has no published answer, so there the answer is copied and the puzzle page opened, as
+  on Codyssi and i18n-puzzles.
 - **Codyssi, i18n-puzzles, Coding Quest have no known submission API.** I looked (web
   search + inspecting the public pages) and found none, and this project's own scripts for
   these three never call the network either — they only validate locally. Submit Answer

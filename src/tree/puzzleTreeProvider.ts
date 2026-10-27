@@ -583,10 +583,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
 
     const name = await vscode.window.showInputBox({
       title: `${provider.label}: name for the new event`,
-      prompt:
-        provider.id === 'codingquest'
-          ? 'Include the track, e.g. "challenge_2026" or "practice_2026"'
-          : 'e.g. a year like 2026',
+      prompt: 'e.g. a year like 2026',
       ignoreFocusOut: true,
     });
     if (!name?.trim()) return;

@@ -72,16 +72,13 @@ export const codingQuestProvider = createAssistProvider({
   id: 'codingquest',
   label: 'Coding Quest',
   itemNoun: 'Day',
-  detectRe: /events\/(challenge|practice)_(\d{4})\/day_(\d{2})\//,
-  // Challenge and practice are separate tracks for the same year, so both are kept in
-  // "group" to avoid conflating their progress — a configured runCommand's ${year}
-  // placeholder receives e.g. "challenge_2024" here, not a bare year.
-  group: (m) => `${m[1]}_${m[2]}`,
-  index: (m) => String(Number(m[3])),
+  // Editions as the archive names them: events/2022 … events/2024, and events/prequel
+  // (2022's warm-up). The older challenge_YYYY / practice_2022 folder names still work.
+  detectRe: /events\/(?:challenge_)?(\d{4}|prequel|practice_2022)\/day_(\d{2})\//,
+  group: (m) => (m[1] === 'practice_2022' ? 'prequel' : m[1]),
+  index: (m) => String(Number(m[2])),
   // codingquest.io is gone; the event lives on in its author's archive, one page per day.
   puzzleUrl: codingQuestPuzzleUrl,
-  // group already includes the challenge/practice prefix (e.g. "challenge_2024"), so
-  // "New Event"'s name prompt for this site asks for exactly that combined form.
   scaffoldPath: (ctx) => {
     const day = ctx.index.padStart(2, '0');
     return `events/${ctx.group}/day_${day}/day_${day}.py`;

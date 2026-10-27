@@ -76,8 +76,9 @@ export interface PuzzleProvider {
   /** Link to the puzzle's page on the site, for a human to open. */
   puzzleUrl(ctx: PuzzleContext): string;
   /** Only implemented by sites with a known submission API (aoc, everybodycodes). Returns
-   * every part fetchable in one go, not just the requested one. */
-  fetchInput?(ctx: PuzzleContext, token: string, contact: string): Promise<PuzzleInputParts>;
+   * every part fetchable in one go, not just the requested one. An input that isn't text
+   * (an image) is stored with saveFile, and its workspace-relative path is the input. */
+  fetchInput?(ctx: PuzzleContext, token: string, contact: string, saveFile?: SaveInputFile): Promise<PuzzleInputParts>;
   submit?(ctx: PuzzleContext, token: string, answer: string, contact: string): Promise<SubmitResult>;
   /** Only implemented where the site's own puzzle page displays the confirmed-correct
    * answer for parts you've already solved (aoc: "Your puzzle answer was ..."), even when
@@ -108,4 +109,16 @@ export interface PuzzleProvider {
    * by the tree's "New Event" scaffolding action. Only implemented by sites with a real
    * grouped-event structure (not i18n-puzzles, which is flat and has no such concept). */
   scaffoldPath?(ctx: PuzzleContext): string;
+}
+
+/** Stores a downloaded input file in the workspace's cache; returns its workspace-relative
+ * path, which is what the solver gets as its input (the solver runs from the workspace root). */
+export type SaveInputFile = (name: string, data: Uint8Array) => string;
+
+/** An input fetch that can't produce text, but knows where the input is — e.g. a puzzle
+ * whose input is an image. Its links become buttons on the error notification. */
+export class InputElsewhereError extends Error {
+  constructor(message: string, readonly links: { label: string; url: string }[]) {
+    super(message);
+  }
 }

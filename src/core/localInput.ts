@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { PuzzleContext, PuzzleInputParts, SiteId } from '../types';
+import { PuzzleContext, PuzzleInputParts, SaveInputFile, SiteId } from '../types';
 
 /** One JSON file per site: { "<group>": { "<index>": { "1": "...", "2": "..." } } }. */
 type SiteInputStore = Record<string, Record<string, PuzzleInputParts>>;
@@ -70,4 +70,15 @@ export function writeLocalInput(
   store[ctx.group] = store[ctx.group] ?? {};
   store[ctx.group][ctx.index] = { ...store[ctx.group][ctx.index], ...parts };
   writeSiteStore(folder, siteId, store);
+}
+
+/** Where a site's non-text inputs (images) go: .puzzle-submitter/<site>-files/<name>. */
+export function inputFileSaver(folder: vscode.WorkspaceFolder, siteId: SiteId): SaveInputFile {
+  return (name, data) => {
+    const relative = `.puzzle-submitter/${siteId}-files/${name}`;
+    const file = path.join(folder.uri.fsPath, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, data);
+    return relative;
+  };
 }

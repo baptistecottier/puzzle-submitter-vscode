@@ -12,13 +12,13 @@ import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from './core/py
 import { canRunSolver, runPythonSolver } from './core/pythonRunner';
 import { maxPartFor } from './core/puzzleParts';
 import { ensureLocalInput } from './core/ensureInput';
-import { readLocalInput, siteInputPath, writeLocalInput } from './core/localInput';
+import { inputFileSaver, readLocalInput, siteInputPath, writeLocalInput } from './core/localInput';
 import { nextUnsolvedPart } from './core/progress';
 import { guardSubmit } from './core/submitGuard';
 import { checkWithoutSubmitting } from './core/publishedAnswers';
 import { recordSubmitResult, describeSubmitResult } from './core/submitRecorder';
 import { getStatusBarItem, refreshStatusBar } from './core/statusBar';
-import { askForSolverInput, getOutputChannel, log, showSolverError } from './core/output';
+import { askForSolverInput, getOutputChannel, log, showFetchError, showSolverError } from './core/output';
 import { editorFileUri } from './core/editorFile';
 import { isGridosGroup } from './providers/everybodycodes';
 import { registerInputDocuments } from './core/inputDocument';
@@ -187,18 +187,22 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
   if (!provider.submit) {
     const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
     const check = await checkWithoutSubmitting(context.workspaceState, provider, ctx, answer, contact);
-    await vscode.env.clipboard.writeText(answer);
-    if (check === 'mismatch') {
-      vscode.window.showWarningMessage(`❌ "${answer}" doesn't match ${provider.label}'s published answer (copied anyway).`);
+    if (check === 'match') {
+      vscode.window.showInformationMessage(`✅ "${answer}" is the right answer.`);
+      void treeProvider?.refresh();
+      void panelProvider?.refresh();
       return;
     }
+    if (check === 'mismatch') {
+      vscode.window.showWarningMessage(`❌ "${answer}" is not the right answer.`);
+      return;
+    }
+    // Nothing to judge it by: hand it over for the site instead.
+    await vscode.env.clipboard.writeText(answer);
     await vscode.env.openExternal(vscode.Uri.parse(provider.puzzleUrl(ctx)));
     vscode.window.showInformationMessage(
-      check === 'match'
-        ? `✅ "${answer}" matches ${provider.label}'s published answer — copied to the clipboard, puzzle page opened.`
-        : `${provider.label} has no submission API — answer "${answer}" copied to the clipboard, puzzle page opened.`
+      `${provider.label} has no submission API — answer "${answer}" copied to the clipboard, puzzle page opened.`
     );
-    void treeProvider?.refresh();
     return;
   }
 
@@ -276,7 +280,7 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
     { location: vscode.ProgressLocation.Notification, title: `Fetching input from ${provider.label}…` },
     async () => {
       try {
-        const parts = await provider.fetchInput!(ctx, token, contact);
+        const parts = await provider.fetchInput!(ctx, token, contact, inputFileSaver(folder, provider.id));
         writeLocalInput(folder, provider.id, ctx, parts);
         log(`Saved input to ${siteInputPath(provider.id)}`);
         vscode.window.showInformationMessage(`Puzzle Submitter: input saved to ${siteInputPath(provider.id)}.`);
@@ -285,7 +289,7 @@ async function fetchInputCommand(context: vscode.ExtensionContext): Promise<void
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         log(`Error: ${message}`);
-        vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`);
+        showFetchError(error);
       }
     }
   );

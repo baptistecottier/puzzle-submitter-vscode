@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { PuzzleContext, PuzzleInputParts, PuzzleProvider } from '../types';
 import { requireToken } from './auth';
-import { readLocalInput, siteInputPath, writeLocalInput } from './localInput';
-import { log } from './output';
+import { inputFileSaver, readLocalInput, siteInputPath, writeLocalInput } from './localInput';
+import { log, showFetchError } from './output';
 
 /**
  * Local input for the requested part if it's already cached; otherwise, when the site
@@ -27,13 +27,11 @@ export async function ensureLocalInput(
 
   const contact = vscode.workspace.getConfiguration('puzzleSubmitter').get<string>('contact', '');
   try {
-    const fetched = await provider.fetchInput(ctx, token, contact);
+    const fetched = await provider.fetchInput(ctx, token, contact, inputFileSaver(folder, provider.id));
     writeLocalInput(folder, provider.id, ctx, fetched);
     log(`Saved input to ${siteInputPath(provider.id)} (auto-fetched before running solver)`);
   } catch (error) {
-    vscode.window.showErrorMessage(
-      `Puzzle Submitter: couldn't auto-fetch input: ${error instanceof Error ? error.message : String(error)}`
-    );
+    showFetchError(error, "Puzzle Submitter: couldn't auto-fetch input: ");
     return existing;
   }
   return readLocalInput(folder, provider.id, ctx);
