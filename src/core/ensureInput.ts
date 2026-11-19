@@ -8,7 +8,7 @@ import { log, showFetchError } from './output';
  * Local input for the requested part if it's already cached; otherwise, when the site
  * has a fetch API, fetches it automatically (prompting for a token if needed) and
  * caches it before returning. Returns undefined only when nothing is cached and either
- * there's no fetch API for this site (codyssi/i18n-puzzles/coding quest) or the fetch
+ * there's no fetch API for this site (codyssi/i18n-puzzles) or the fetch
  * itself didn't produce that part (not unlocked yet, fetch failed, token cancelled).
  */
 export async function ensureLocalInput(

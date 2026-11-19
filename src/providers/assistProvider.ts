@@ -58,16 +58,6 @@ export const codyssiProvider = createAssistProvider({
   },
 });
 
-export const i18nPuzzlesProvider = createAssistProvider({
-  id: 'i18n-puzzles',
-  label: 'i18n-puzzles',
-  itemNoun: 'Puzzle',
-  detectRe: /problems\/problem_(\d{2})\//,
-  group: () => '', // flat numbering, no year/group on this site
-  index: (m) => String(Number(m[1])),
-  puzzleUrl: (ctx) => `https://i18n-puzzles.com/puzzle/${ctx.index}/`,
-});
-
 export const codingQuestProvider = createAssistProvider({
   id: 'codingquest',
   label: 'Coding Quest',

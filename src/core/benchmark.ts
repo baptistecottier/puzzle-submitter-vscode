@@ -29,7 +29,9 @@ export async function benchmarkPart(
   timeoutSeconds: number,
   folder: vscode.WorkspaceFolder,
   workspaceState: vscode.Memento,
-  cancelToken?: vscode.CancellationToken
+  cancelToken?: vscode.CancellationToken,
+  /** Told how long preprocessing() and solver() took, once the run finished. */
+  onSeconds?: (seconds: number | undefined) => void
 ): Promise<PartBenchmark> {
   if (!provider.solverInputShape) {
     return { status: 'error', message: `${provider.label} has no solver() runner.` };
@@ -44,7 +46,7 @@ export async function benchmarkPart(
 
   try {
     let cancelSub: vscode.Disposable | undefined;
-    const { parts } = await runPythonSolver(
+    const { parts, seconds } = await runPythonSolver(
       pythonPath,
       solutionFile,
       inputParts,
@@ -56,6 +58,7 @@ export async function benchmarkPart(
         cancelSub = cancelToken?.onCancellationRequested(kill);
       }
     ).finally(() => cancelSub?.dispose());
+    onSeconds?.(seconds);
     const computed = parts[ctx.part - 1] ?? parts[0] ?? '';
     const reference = referenceAnswer(workspaceState, provider, ctx, ctx.part);
     if (!reference) {

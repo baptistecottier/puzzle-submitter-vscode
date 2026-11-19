@@ -6,6 +6,7 @@ import { PuzzleContext, PuzzleInputParts, PuzzleProvider, SolverInputShape } fro
 
 const MARKER = '__PUZZLE_SUBMITTER_RESULT__';
 const INPUT_MARKER = '__PUZZLE_SUBMITTER_INPUT__';
+const TIME_MARKER = '__PUZZLE_SUBMITTER_SECONDS__';
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 
 /** Whether "Run solver()" applies to this file/context: the provider declares a calling
@@ -26,12 +27,13 @@ export function canRunSolver(provider: PuzzleProvider, ctx: PuzzleContext | unde
 // earlier version of this file did) broke a real day_03.py whose preprocessing() returns
 // a per-character list of (dx, dy) tuples meant to be consumed as one structure, not
 // splatted into thousands of positional args. 'parts-dict' hands solver() every fetched
-// part at once as one dict argument {1: ..., 2: ..., 3: ...} (ec.py's run_solver), never
-// unpacking regardless of what preprocessing() returns.
+// part at once as one dict argument {1: ..., 2: ..., 3: ...} (ec.py's run_solver). On any
+// shape, solver() also says so itself: a tuple or list goes to solver(*args) when it
+// declares two or more required arguments, and a tuple when it takes *args (see spread).
 const BOOTSTRAP = `
 import builtins, collections.abc, importlib.util, inspect, itertools, json, os, sys
 
-solution_path, parts_path, shape, target_part, marker, example_json, input_marker = sys.argv[1:8]
+solution_path, parts_path, shape, target_part, marker, example_json, input_marker, time_marker = sys.argv[1:9]
 
 # input() is answered by the extension (an input box) on interactive runs: the question
 # goes out as a marker line, the reply comes back on stdin. The bulk runs (Run All, Sync)
@@ -100,16 +102,41 @@ if shape == "parts-dict":
 else:
     data = parts.get(target_part, next(iter(parts.values()), ""))
 
-if hasattr(module, "preprocessing"):
-    data = call(module.preprocessing, [data])
-
 if not hasattr(module, "solver"):
     raise SystemExit("No solver() function found in " + solution_path)
 
-if shape == "text" and isinstance(data, tuple):
-    result = call(module.solver, list(data))
-else:
-    result = call(module.solver, [data])
+# Timed from here to the last answer: preprocessing() and solver() only, never the
+# interpreter start-up, the imports or this wrapper (what a benchmark is meant to measure).
+import time
+started = time.perf_counter()
+
+if hasattr(module, "preprocessing"):
+    data = call(module.preprocessing, [data])
+
+# What solver() is called with, as a list of positional arguments. One-argument solvers
+# keep getting a list (or, on 'parts-dict', a tuple) whole. Parameters an example run fills
+# by name don't count as required.
+def spread(func, value):
+    if shape == "text" and isinstance(value, tuple):
+        return list(value)
+    if not isinstance(value, (tuple, list)):
+        return [value]
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return [value]
+    required = [
+        p for p in params
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        and p.default is p.empty
+        and p.name not in example_params
+    ]
+    takes_rest = any(p.kind is p.VAR_POSITIONAL for p in params)
+    if len(required) >= 2 or (takes_rest and isinstance(value, tuple)):
+        return list(value)
+    return [value]
+
+result = call(module.solver, spread(module.solver, data))
 
 if isinstance(result, (str, bytes, dict)):
     result_parts = [result]
@@ -124,6 +151,8 @@ elif hasattr(result, "__iter__"):
     result_parts = list(result)
 else:
     result_parts = [result]
+elapsed = time.perf_counter() - started
+print(time_marker + repr(elapsed))
 print(marker + json.dumps([str(p) for p in result_parts]))
 `;
 
@@ -133,6 +162,8 @@ export interface PythonRunResult {
    * with the result-marker line stripped out — callers that don't care (the normal
    * "fill in the answer" flow) can just ignore it. */
   output: string;
+  /** Seconds spent in preprocessing() and solver() — not start-up or imports. */
+  seconds?: number;
 }
 
 /** Thrown for any run failure. `message` is a short, one-line summary fit for a VS Code
@@ -200,6 +231,7 @@ export function runPythonSolver(
         MARKER,
         example ? JSON.stringify(example) : '',
         onInput ? INPUT_MARKER : '',
+        TIME_MARKER,
       ],
       { cwd }
     );
@@ -289,20 +321,27 @@ export function runPythonSolver(
     child.on('error', (error) => finish(() => reject(new SolverError(`Solver failed: ${error.message}`))));
     child.on('close', (code) =>
       finish(() => {
-        // The solution's own prints, without the extension's question markers.
-        const printed = stdout
+        // The solution's own prints, without the extension's question markers — otherwise
+        // exactly as printed: leading spaces and blank lines can be part of a drawn grid.
+        const withTiming = stdout
           .split('\n')
           .filter((l) => !l.startsWith(INPUT_MARKER))
           .join('\n');
+        // The timing line sits right before the result line. Cut out as a unit, a final
+        // print(..., end='') glued to it stays glued to the result line, as before.
+        const timing = new RegExp(`${TIME_MARKER}([^\\n]*)\\n?`).exec(withTiming);
+        const seconds = timing ? Number.parseFloat(timing[1]) : undefined;
+        const printed = timing ? withTiming.replace(timing[0], '') : withTiming;
+        const asPrinted = (text: string) => (text.trim() ? text.replace(/\r?\n$/, '') : undefined);
         if (cancelled) {
-          reject(new SolverError('Solver run cancelled.', printed.trim() || undefined));
+          reject(new SolverError('Solver run cancelled.', asPrinted(printed)));
           return;
         }
         if (timedOut) {
           reject(
             new SolverError(
               `Solver timed out after ${timeoutSeconds}s (puzzleSubmitter.solverTimeoutSeconds) — killed.`,
-              printed.trim() || undefined
+              asPrinted(printed)
             )
           );
           return;
@@ -313,22 +352,25 @@ export function runPythonSolver(
         }
         if (code !== 0) {
           const summary = lastLine(stderr) ?? `exited with code ${code}`;
-          const detail = [printed.trim(), stderr.trim()].filter(Boolean).join('\n\n');
+          const detail = [asPrinted(printed), asPrinted(stderr)].filter(Boolean).join('\n\n');
           reject(new SolverError(`Solver failed: ${summary}`, detail || undefined));
           return;
         }
-        const lines = printed.split('\n');
-        const markerIndex = lines.findIndex((l) => l.startsWith(MARKER));
-        if (markerIndex === -1) {
-          reject(new SolverError('Solver ran but printed no result.', (printed + stderr).trim() || undefined));
+        // The result line comes last, but not necessarily at the start of a line: a final
+        // print(..., end='') leaves it glued to that print, which stays in the output.
+        const start = printed.lastIndexOf(MARKER);
+        if (start === -1) {
+          reject(new SolverError('Solver ran but printed no result.', asPrinted(printed + stderr)));
           return;
         }
-        const output = lines.filter((_, i) => i !== markerIndex).join('\n').trim();
+        const lineEnd = printed.indexOf('\n', start);
+        const resultLine = printed.slice(start + MARKER.length, lineEnd === -1 ? undefined : lineEnd);
+        const output = asPrinted(printed.slice(0, start) + (lineEnd === -1 ? '' : printed.slice(lineEnd + 1))) ?? '';
         try {
-          const parts = JSON.parse(lines[markerIndex].slice(MARKER.length)) as string[];
-          resolve({ parts, output });
+          const parts = JSON.parse(resultLine) as string[];
+          resolve({ parts, output, seconds });
         } catch {
-          reject(new SolverError('Could not parse solver result.', lines[markerIndex]));
+          reject(new SolverError('Could not parse solver result.', MARKER + resultLine));
         }
       })
     );

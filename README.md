@@ -1,7 +1,7 @@
 # Puzzle Submitter
 
-Submit puzzle answers to Advent of Code, Everybody Codes, Codyssi, i18n-puzzles and
-Coding Quest without leaving VS Code — works with a solution in any language (type or
+Submit puzzle answers to Advent of Code, Everybody Codes, Codyssi, i18n-puzzles,
+Coding Quest and Systems Check without leaving VS Code — works with a solution in any language (type or
 paste the answer, or point `puzzleSubmitter.runCommand` at any script that prints one),
 with an optional built-in runner for Python solutions specifically (see
 [Writing a Python solution](#writing-a-python-solution)). Everybody Codes' GridOS
@@ -43,6 +43,12 @@ scored exactly as on the site, and can be submitted from the panel (see [GridOS]
   likely a wrong answer. If nothing was recorded yet and the site comes back "already
   solved" anyway, the real answer is fetched on the spot (same lookup as "Fetch Reference
   Answers from Site" below) and shown right in that message — not just saved silently.
+- **Remembers what you've submitted**, per part: the panel lists it under "Past
+  submissions", and sending the same answer a second time asks first, showing when it was
+  sent and what the site said. Answers copied for a site without a submission API
+  (Systems Check) count too. A rate-limited submission doesn't, since it was never judged.
+  On those sites, the ✓ / ✗ beside a copied answer records what the site told you: ✓
+  marks the part solved with it, and Submit then checks later answers against it.
 
 ## Install
 
@@ -88,10 +94,13 @@ or pointing `puzzleSubmitter.runCommand` at your own script.
 - If `preprocessing()` is defined, it's called first and its return value becomes
   `data` for `solver()`.
 - `solver(data)` is called — **except**: if `preprocessing()` returned a *tuple*, it's
-  unpacked into `solver(*data)` (matching `aocp.py`'s own rule — a *list* is passed
-  through as one argument, never unpacked); Everybody Codes' `solver()` instead always
-  receives every part at once as one dict argument (`{1: ..., 2: ..., 3: ...}`),
-  matching `ec.py`.
+  unpacked into `solver(*data)` (matching `aocp.py`'s own rule). Everybody Codes'
+  `preprocessing()` instead receives every part at once as one dict
+  (`{1: ..., 2: ..., 3: ...}`), matching `ec.py`, and so does its `solver()` without a
+  `preprocessing()`; there, a tuple stays one argument for a one-argument `solver()`.
+- On every site, a tuple or *list* goes to `solver(*data)` when `solver()` declares two or
+  more required arguments, and a tuple when it takes `*args`. A one-argument `solver()`
+  gets a list whole.
 - If `solver()` returns a tuple, list, or generator, each item is treated as one part's
   answer (`parts[0]` for part 1, `parts[1]` for part 2, ...); a single return value is
   used as-is.
@@ -191,6 +200,11 @@ palette. On a GridOS `.rules` file it switches to a dedicated mode, described un
     has no example of its own ("the same, on a bigger map") get none. Each part has its
     own example notes, and `solver()` gets every part at once, so a part 2 example runs
     as `{1: part 1's example, 2: part 2's example}`.
+  - **Systems Check**: the mission page is public, so no token is needed. A small table
+    says, per mission, which block is each example's input and where its answer sits in
+    the text (checked against missions 1–10; only part 1, since part 2's text isn't on
+    the page until it's unlocked). A newer mission gets its first input-shaped block and
+    no answer until the table is updated — add the answer by hand in the examples cache.
   - On the other sites, examples you add to the cache by hand work the same way.
 - Submit, with the result shown inline.
 
@@ -232,7 +246,7 @@ provider recognizes (there's no "list all my puzzles" API to build this from ins
   whatever's already cached, so re-running it later is cheap. This is what you want
   instead of clicking "Fetch Reference Answers" and "Run All Quests" separately for every
   year you've ever touched. Needs your session token if the site has any fetch API; sites
-  with neither (codyssi, i18n-puzzles, coding quest) just get benchmarked, across
+  with neither (codyssi, coding quest) just get benchmarked, across
   everything, with no token prompt at all. Cancellable from the progress notification —
   this also kills whichever solver run is currently in flight, instead of only stopping
   before the next quest.
@@ -315,7 +329,7 @@ scores exactly as on everybody.codes:
   (the extension only knows what it's seen you submit itself, so it can guess wrong).
   Then it gets an answer — typed, from a configured command, or (on a `.py` file, any
   site) by running the file's own `preprocessing()`/`solver()` directly — and submits it.
-- **Puzzle Submitter: Fetch Input** — aoc/everybodycodes, and Coding Quest from its
+- **Puzzle Submitter: Fetch Input** — aoc/everybodycodes/Systems Check/i18n-puzzles, and Coding Quest from its
   archive (no token; 2022 day 10's input is an image, downloaded to
   `.puzzle-submitter/codingquest-files/2022-day_10.png` — your solver gets that path as its
   input, relative to the workspace root, which is where solvers run; 2024 day 8 has no
@@ -330,21 +344,26 @@ scores exactly as on everybody.codes:
   open the panel, where GridOS programs are run and submitted.
 - **Puzzle Submitter: Set Input (from Clipboard)** — any site. Saves whatever's on the
   clipboard as this puzzle's local input, merged into the same cache "Fetch Input" uses.
-  The only way to get local input for codyssi/i18n-puzzles (no fetch API),
+  The only way to get local input for codyssi (no fetch API),
   and a manual override/correction for any site.
-- **Puzzle Submitter: Set Token for Current Site** / **Clear Token for Current Site** —
-  setting a token, if this workspace already has cached input or recorded answers for
-  the site, asks whether to clear them. Neither is scoped per-account, so switching to a
-  different account's token (e.g. testing with a fresh/demo account) would otherwise keep
-  showing the previous account's input and solved/answer state as if it belonged to the
-  new one. Skipped entirely on a genuine first-time setup, where there's nothing to clear.
+- **Puzzle Submitter: Set, Update or Switch Account Token for Current Site** /
+  **Clear Token for Current Site** — with a token already set, you pick (in the panel,
+  the links next to "Token set"):
+  - **Update**: a new token for the same account, e.g. after the cookie expired. Nothing
+    else changes.
+  - **Switch account**: a token for another account. This site's cached input, recorded
+    answers and submission history in this workspace are cleared, since none of them is
+    scoped per account and they'd otherwise show up as the new account's.
+  - **Clear**: forgets the token and keeps everything else.
+
+  Cancelling the token prompt changes nothing.
 - **Puzzle Submitter: Set Site for Workspace**
 
 ## Settings
 
 | Setting | Scope | Purpose |
 |---|---|---|
-| `puzzleSubmitter.site` | workspace | Which puzzle site this workspace submits to: one of `aoc`, `everybodycodes`, `codyssi`, `i18n-puzzles`, `codingquest`. Left unset, you'll be asked (and it's saved for you) the first time you run a command or open the panel. |
+| `puzzleSubmitter.site` | workspace | Which puzzle site this workspace submits to: one of `aoc`, `everybodycodes`, `codyssi`, `i18n-puzzles`, `codingquest`, `systemscheck`. Left unset, you'll be asked (and it's saved for you) the first time you run a command or open the panel. |
 | `puzzleSubmitter.runCommand` | workspace | Optional shell command that prints an answer to stdout, offered as an alternative to typing it. Placeholders: `${year}`, `${day}`, `${part}`, `${file}`. The **last non-empty line of stdout** is used, then shown to you to confirm/edit before it's submitted. Generic — not wired up to this project's own `aocp`/`ec.py`/etc. scripts, since those print decorated multi-line/scoreboard output rather than a bare answer; point it at a script that prints just the answer, e.g. `python3 ${file}`. |
 | `puzzleSubmitter.contact` | global | Your email or GitHub URL, sent in the `User-Agent` of Advent of Code requests. AoC's documented automation etiquette asks scripts to identify themselves this way, so the site owner can reach you if something misbehaves. |
 | `puzzleSubmitter.pythonPath` | workspace | Interpreter used by "Run solver() from this file". Left unset, this workspace's `.venv/bin/python` is used if present, else `python3` on PATH. |
@@ -355,7 +374,11 @@ scores exactly as on everybody.codes:
 - **Advent of Code**: log in, DevTools → Application/Storage → Cookies →
   `adventofcode.com` → copy the `session` cookie's value.
 - **Everybody Codes**: same idea, copy the `everybody-codes` cookie's value.
-- **Codyssi / i18n-puzzles / Coding Quest**: no token needed — these have no known
+- **Systems Check**: copy the `session` cookie's value from `systemscheck.dev`. It's only
+  used to fetch your input.
+- **i18n-puzzles**: copy the `sessionid` cookie's value from `i18n-puzzles.com`. It's
+  used to fetch your input and submit your answers.
+- **Codyssi / Coding Quest**: no token needed — these have no known
   submission API, so there's nothing to authenticate.
 
 ## Known limitations
@@ -370,10 +393,22 @@ scores exactly as on everybody.codes:
   **Submit** (panel or command) checks your answer against the published one right away
   and tells you whether it's right. A right one marks the part solved. 2024's tenth day
   has no published answer, so there the answer is copied and the puzzle page opened, as
-  on Codyssi and i18n-puzzles.
-- **Codyssi, i18n-puzzles, Coding Quest have no known submission API.** I looked (web
+  on Codyssi.
+- **Systems Check** (`systemscheck.dev`) has no public API. Solutions go in
+  `missions/mission_NN.py`. Fetch Input reads your input with your session cookie; Submit
+  copies your answer and opens the mission page. Inputs are personal and its terms ask that
+  they aren't republished, so keep `.puzzle-submitter/` out of git.
+- **i18n-puzzles** has no API either, so Submit posts the puzzle page's own answer form
+  with your `sessionid` cookie. Only the wrong-answer reply ("That is not the correct
+  answer.") has been seen for real; a reply saying "correct" without "not" counts as
+  right, and anything else (a rate limit, say) is shown in the site's own words as an
+  unrecognized result. A solved puzzle's page shows "Your puzzle answer was: …" instead
+  of the form, which is how already-solved puzzles are recognized and their answers read
+  back (Submit, Fetch Reference Answers from Site, Sync with Site). Inputs are personal
+  too, so keep `.puzzle-submitter/` out of git here as well.
+- **Codyssi and Coding Quest have no known submission API.** I looked (web
   search + inspecting the public pages) and found none, and this project's own scripts for
-  these three never call the network either — they only validate locally. Submit Answer
+  these two never call the network either — they only validate locally. Submit Answer
   still detects the puzzle and copies your answer to the clipboard + opens the puzzle
   page, but doesn't submit it for you. If you ever capture the real request these sites
   make when you submit manually (browser DevTools → Network tab, the same way the

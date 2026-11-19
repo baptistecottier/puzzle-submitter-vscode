@@ -1,4 +1,4 @@
-export type SiteId = 'aoc' | 'everybodycodes' | 'codyssi' | 'i18n-puzzles' | 'codingquest';
+export type SiteId = 'aoc' | 'everybodycodes' | 'codyssi' | 'i18n-puzzles' | 'codingquest' | 'systemscheck';
 
 export interface PuzzleContext {
   /** Event year, story number, etc. — whatever the site groups puzzles by. Empty string if the site has none (e.g. i18n-puzzles). */
@@ -42,7 +42,7 @@ export interface FetchedExamples {
 
 /** How a site's real solver(data) expects to receive PuzzleInputParts once loaded. */
 export type SolverInputShape =
-  | 'text' // solver(data: str) — data is the single relevant part's text (aoc, codyssi, i18n-puzzles, codingquest)
+  | 'text' // solver(data: str) — data is the single relevant part's text (aoc, codyssi, i18n-puzzles, codingquest, systemscheck)
   | 'parts-dict'; // solver(data: dict[int, str]) — data is every fetched part at once (everybodycodes)
 
 export interface PuzzleProvider {
@@ -50,6 +50,8 @@ export interface PuzzleProvider {
   label: string;
   /** Shown when prompting the user to paste their session token. */
   tokenPrompt: string;
+  /** Fetching needs an account even though answers can't be submitted from here. */
+  usesToken?: boolean;
   /** Highest part number this site's puzzles have (used for the "next unsolved part" default). */
   maxPart: number;
   /** Highest part number for a SPECIFIC puzzle, when it differs from maxPart (e.g. Advent

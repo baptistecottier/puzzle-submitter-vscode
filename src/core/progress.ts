@@ -79,6 +79,12 @@ export async function markSolved(
   await state.update(progressKey(provider, ctx), { ...existing, [String(part)]: value });
 }
 
+/** Undoes markSolved for one part — when an answer marked right by hand turns out not to be. */
+export async function unmarkSolved(state: vscode.Memento, provider: PuzzleProvider, ctx: PuzzleContext, part: number): Promise<void> {
+  const { [String(part)]: _removed, ...rest } = getRecordedAnswers(state, provider, ctx);
+  await state.update(progressKey(provider, ctx), rest);
+}
+
 /** First part not yet marked solved, defaulting to this puzzle's last part once everything else is done. */
 export function nextUnsolvedPart(state: vscode.Memento, provider: PuzzleProvider, ctx: PuzzleContext): number {
   const solved = new Set(getSolvedParts(state, provider, ctx));

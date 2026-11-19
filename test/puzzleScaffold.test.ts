@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { genericScaffoldPath, inferPathPrefix, planNewEvent, scaffoldFileContent } from '../src/core/puzzleScaffold';
 import { aocProvider } from '../src/providers/aoc';
 import { everybodyCodesProvider } from '../src/providers/everybodycodes';
-import { codyssiProvider, codingQuestProvider, i18nPuzzlesProvider } from '../src/providers/assistProvider';
+import { codyssiProvider, codingQuestProvider } from '../src/providers/assistProvider';
+import { i18nPuzzlesProvider } from '../src/providers/i18nPuzzles';
 import { PuzzleContext } from '../src/types';
 
 const ctx = (overrides: Partial<PuzzleContext> = {}): PuzzleContext => ({ group: '2026', index: '3', part: 1, ...overrides });

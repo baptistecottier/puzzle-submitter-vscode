@@ -129,6 +129,14 @@ export function getWebviewHtml(): string {
     resize: vertical;
   }
   .example-runs { margin-top: 6px; font-size: 12px; }
+  .separator { opacity: 0.5; }
+  .history { margin-top: 8px; font-size: 12px; }
+  .history summary { cursor: pointer; }
+  .history-row { display: flex; gap: 6px; align-items: baseline; margin-top: 3px; }
+  .history-row code { word-break: break-all; }
+  .verdict { padding: 0 6px; min-width: 0; font-size: 12px; line-height: 18px; opacity: 0.6; }
+  .verdict.active { opacity: 1; outline: 1px solid var(--vscode-focusBorder); }
+  .history-date { margin-left: auto; white-space: nowrap; opacity: 0.7; }
   .run-note { margin-top: 6px; font-size: 12px; word-break: break-word; }
   .run-row { position: relative; }
   .gridos-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 2px; }
@@ -182,6 +190,7 @@ export function getWebviewHtml(): string {
 const vscode = acquireVsCodeApi();
 let state = { progress: [] };
 let draftAnswer = '';
+let historyOpen = false;
 // Unsaved edits to the input, kept across re-renders (state updates) for the same part.
 let draftInput;
 let draftInputKey;
@@ -377,8 +386,40 @@ function render() {
     }));
   }
 
+  renderHistory(card);
   renderFooter(card);
   root.appendChild(card);
+}
+
+const HISTORY_ICONS = { correct: '✅', 'already-solved': 'ℹ️', incorrect: '❌', unknown: '⚠️', copied: '📋' };
+
+/** The active part's past submissions, closed until asked for: space is precious. */
+function renderHistory(card) {
+  if (!state.history || state.history.length === 0) return;
+  const box = el('details', { class: 'history' }, [
+    el('summary', { text: 'Past submissions (' + state.history.length + ')' }),
+  ]);
+  box.open = historyOpen;
+  box.addEventListener('toggle', () => { historyOpen = box.open; });
+  for (const entry of state.history) {
+    // Without a submission API only you saw the site's reply: say whether it was right.
+    // Clicking the mark already set takes it back.
+    const judge = !state.supportsSubmit && ['copied', 'correct', 'incorrect'].includes(entry.status);
+    const mark = (verdict, text, title) => el('button', {
+      class: 'verdict' + (entry.status === verdict ? ' active' : ''),
+      title: entry.status === verdict ? 'Undo' : title,
+      onclick: () => post({ type: 'setVerdict', answer: entry.answer, verdict: entry.status === verdict ? 'copied' : verdict }),
+      text,
+    });
+    box.appendChild(el('div', { class: 'history-row', title: entry.message || '' }, [
+      el('span', { text: HISTORY_ICONS[entry.status] || '' }),
+      el('code', { text: entry.answer }),
+      judge ? mark('correct', '✓', 'It was right') : null,
+      judge ? mark('incorrect', '✗', 'It was wrong') : null,
+      el('span', { class: 'history-date', text: new Date(entry.at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) }),
+    ]));
+  }
+  card.appendChild(box);
 }
 
 /** The last submit result and the token line, under either mode. */
@@ -386,11 +427,19 @@ function renderFooter(card) {
   if (state.lastResult) {
     card.appendChild(el('div', { class: 'result ' + state.lastResult.status, text: state.lastResult.message }));
   }
-  if (state.supportsSubmit) {
+  if (state.supportsSubmit || state.usesToken) {
     card.appendChild(el('div', { class: 'status-line', style: 'margin-top:10px' }, [
       el('span', { class: 'dot ' + (state.hasToken ? 'ok' : 'missing') }),
       el('span', { text: state.hasToken ? 'Token set' : 'No token set' }),
-      el('a', { class: 'link', onclick: () => post({ type: state.hasToken ? 'clearToken' : 'setToken' }), text: state.hasToken ? 'Clear' : 'Set' }),
+      ...(state.hasToken
+        ? [
+            el('a', { class: 'link', title: 'Same account, e.g. the cookie expired', onclick: () => post({ type: 'updateToken' }), text: 'Update' }),
+            el('span', { class: 'separator', text: '·' }),
+            el('a', { class: 'link', title: "Another account: this site's cached input, answers and history are cleared", onclick: () => post({ type: 'switchAccount' }), text: 'Switch account' }),
+            el('span', { class: 'separator', text: '·' }),
+            el('a', { class: 'link', title: 'Forget the token; cached data is kept', onclick: () => post({ type: 'clearToken' }), text: 'Clear' }),
+          ]
+        : [el('a', { class: 'link', onclick: () => post({ type: 'setToken' }), text: 'Set' })]),
     ]));
   }
 }
@@ -527,11 +576,11 @@ function solverHelpCard(shape) {
   const points = allParts
     ? [
         ['<code>data</code> holds every unlocked part at once: <code>{1: "…", 2: "…", 3: "…"}</code>.'],
-        ['What <code>preprocessing()</code> returns is passed to <code>solver()</code> as one argument.'],
+        ['What <code>preprocessing()</code> returns is one argument, unless <code>solver()</code> declares several: a tuple or list then becomes <code>solver(*data)</code>.'],
       ]
     : [
         ['<code>data</code> is the selected part\\'s input, as text.'],
-        ['If <code>preprocessing()</code> returns a tuple, it\\'s unpacked: <code>solver(*data)</code>. A list is passed as one argument.'],
+        ['If <code>preprocessing()</code> returns a tuple, it\\'s unpacked: <code>solver(*data)</code>. A list is too when <code>solver()</code> declares several arguments.'],
       ];
   points.push(
     ['Return one answer, or several (tuple, list or <code>yield</code>), one per part.'],

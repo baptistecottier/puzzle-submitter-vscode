@@ -9,7 +9,7 @@ export async function getToken(secrets: vscode.SecretStorage, provider: PuzzlePr
   return secrets.get(secretKey(provider.id));
 }
 
-/** Handed to callers for a site without accounts (no submission API): it fetches only
+/** Handed to callers for a site without accounts (no submission API, no usesToken): it fetches only
  * public pages, so there's no token to ask for — but callers stop on a missing one. */
 const NO_ACCOUNT = 'no-account';
 
@@ -17,7 +17,7 @@ export async function requireToken(
   secrets: vscode.SecretStorage,
   provider: PuzzleProvider
 ): Promise<string | undefined> {
-  if (!provider.submit) return NO_ACCOUNT;
+  if (!provider.submit && !provider.usesToken) return NO_ACCOUNT;
   const existing = await getToken(secrets, provider);
   if (existing) {
     return existing;
@@ -27,10 +27,12 @@ export async function requireToken(
 
 export async function promptAndSaveToken(
   secrets: vscode.SecretStorage,
-  provider: PuzzleProvider
+  provider: PuzzleProvider,
+  /** Named in the title, e.g. "the other account" when switching. */
+  whose?: string
 ): Promise<string | undefined> {
   const value = await vscode.window.showInputBox({
-    title: `${provider.label} session token`,
+    title: `${provider.label} session token${whose ? ` for ${whose}` : ''}`,
     prompt: provider.tokenPrompt,
     password: true,
     ignoreFocusOut: true,

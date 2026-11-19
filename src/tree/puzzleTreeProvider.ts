@@ -19,6 +19,16 @@ import { fetchAndCacheExamples, needsExampleFetch, readExamples } from '../core/
 import { guardSubmit } from '../core/submitGuard';
 import { recordSubmitResult, describeSubmitResult } from '../core/submitRecorder';
 import { askForSolverInput, log, showSolverError } from '../core/output';
+import {
+  formatDuration,
+  getTimes,
+  PuzzleTimes,
+  renderScoreboard,
+  ScoreboardRow,
+  scoreboardFooter,
+  setTime,
+  writeScoreboard,
+} from '../core/scoreboard';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,6 +75,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
   private quests = new Map<string, Map<string, QuestEntry>>(); // group -> index -> entry
   private partResults = new Map<string, PartBenchmark>();
   private questResults = new Map<string, Tally>(); // last "Run All Parts" summary, keyed by questKey
+  private times: PuzzleTimes = {}; // how long each puzzle's solution took last time, kept between sessions
   private filter: SolvedFilter;
   private view: vscode.TreeView<TreeNode> | undefined;
 
@@ -126,6 +137,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     // Deliberately not clearing partResults here — a plain refresh (e.g. active editor
     // changed) shouldn't wipe benchmark/submit icons from earlier in the session.
     if (!this.provider || !this.folder) return;
+    this.times = getTimes(this.extensionContext.workspaceState, this.provider.id);
 
     const files = await vscode.workspace.findFiles(
       // .rules: Everybody Codes GridOS programs (core/gridos.ts), alongside Python solutions.
@@ -153,6 +165,10 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         item.description = `${this.describeTally(summary.tally)} · ${summary.ran}/${summary.total} run`;
         item.iconPath = this.iconForTally(summary.tally);
       }
+      const total = this.eventSeconds(node.group);
+      if (total !== undefined) {
+        item.description = [item.description, formatDuration(total)].filter(Boolean).join(' · ');
+      }
       return item;
     }
 
@@ -172,6 +188,10 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
       if (tally) {
         item.description = this.describeTally(tally);
         item.iconPath = this.iconForTally(tally);
+      }
+      const seconds = this.times[node.group]?.[node.index];
+      if (seconds !== undefined) {
+        item.description = [item.description, formatDuration(seconds)].filter(Boolean).join(' · ');
       }
       return item;
     }
@@ -260,6 +280,12 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     }
   }
 
+  /** Total time of the timed puzzles of an event, if any has been timed. */
+  private eventSeconds(group: string): number | undefined {
+    const timed = Object.values(this.times[group] ?? {});
+    return timed.length ? timed.reduce((a, b) => a + b, 0) : undefined;
+  }
+
   /** Sums cached per-quest tallies for an event, so its row shows a result even collapsed. */
   private eventTally(group: string): { tally: Tally; ran: number; total: number } | undefined {
     const perGroup = this.quests.get(group);
@@ -336,7 +362,7 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
    * long before this extension ever recorded anything. Unlike benchmarking, this needs no
    * local solver at all; unlike re-submitting, it actually gets the answer text back,
    * since an "already solved" submit response never repeats it. Only sites that implement
-   * fetchRecordedAnswers support this (aoc, for now). */
+   * fetchRecordedAnswers support this (aoc, i18n-puzzles). */
   async backfillEvent(node: Extract<TreeNode, { kind: 'event' }>): Promise<void> {
     if (!this.provider || !this.folder) return;
     const provider = this.provider;
@@ -424,24 +450,114 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
    * network API at all (codyssi, i18n-puzzles, coding quest) still get the benchmark
    * pass, across every event at once, without any token prompt.
    */
+  /** Every quest of the workspace, in the order the tree displays them. this.quests iterates
+   * in whatever order the filesystem handed back findFiles() results, so progress would
+   * otherwise jump around or interleave unrelated group categories (e.g. EC years/stories) —
+   * see sortGroups/groupSortKey. */
+  private sortedQuests(): { group: string; index: string; filePath: string }[] {
+    const provider = this.provider;
+    const jobs: { group: string; index: string; filePath: string }[] = [];
+    for (const [group, perGroup] of this.quests) {
+      for (const [index, entry] of perGroup) jobs.push({ group, index, filePath: entry.filePath });
+    }
+    const groupKey = (g: string) => (provider?.groupSortKey ? provider.groupSortKey(g) : g);
+    return jobs.sort((a, b) => groupKey(a.group).localeCompare(groupKey(b.group)) || Number(a.index) - Number(b.index));
+  }
+
+  /** The stopwatch button: measure times, set the timeout, write the README scoreboard. */
+  async pickTiming(): Promise<void> {
+    if (!this.provider || !this.folder) return;
+    const timeout = resolveSolverTimeoutSeconds(this.folder);
+    const picked = await vscode.window.showQuickPick(
+      [
+        {
+          label: '$(play) Measure times',
+          detail: 'Run every solution in the workspace and time it — local, no network, nothing submitted',
+          action: 'measure',
+        },
+        {
+          label: '$(watch) Set timeout',
+          description: `currently ${timeout} s`,
+          detail: 'How long a solution may run before it is killed (and gets no time)',
+          action: 'timeout',
+        },
+        {
+          label: '$(markdown) Add scoreboard to README.md',
+          detail: 'Write the solved puzzles and their times into the README, between its scoreboard markers',
+          action: 'readme',
+        },
+      ] as const,
+      { title: 'Puzzles: times' }
+    );
+    if (picked?.action === 'measure') await this.measureTimes();
+    else if (picked?.action === 'timeout') await this.editTimeout();
+    else if (picked?.action === 'readme') await this.addScoreboardToReadme();
+  }
+
+  /** Runs and times every quest of the workspace — the offline "Run All Quests" across every
+   * event at once. Cancellable; what was timed before the cancel is kept. */
+  async measureTimes(): Promise<void> {
+    if (!this.provider || !this.folder) return;
+    const jobs = this.sortedQuests();
+    if (jobs.length === 0) {
+      vscode.window.showInformationMessage('Puzzle Submitter: no quests found in this workspace to time.');
+      return;
+    }
+    const totals: Tally = { match: 0, mismatch: 0, other: 0 };
+    let done = 0;
+    let cancelled = false;
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Puzzle Submitter: timing solutions…', cancellable: true },
+      async (progress, cancelToken) => {
+        for (const { group, index, filePath } of jobs) {
+          if (cancelToken.isCancellationRequested) {
+            cancelled = true;
+            return;
+          }
+          progress.report({
+            message: `${this.groupLabel(group)} ${this.provider!.itemNoun} ${index} (${done + 1}/${jobs.length})`,
+            increment: 100 / jobs.length,
+          });
+          const tally = await this.benchmarkOneQuest(group, index, filePath, cancelToken);
+          totals.match += tally.match;
+          totals.mismatch += tally.mismatch;
+          totals.other += tally.other;
+          done++;
+        }
+        cancelled = cancelToken.isCancellationRequested;
+      }
+    );
+    this._onDidChangeTreeData.fire();
+    const timed = jobs.filter((j) => this.times[j.group]?.[j.index] !== undefined).length;
+    vscode.window.showInformationMessage(
+      `${cancelled ? 'Timing cancelled' : 'Timing done'}: ${timed}/${jobs.length} puzzle(s) timed — ${this.describeTally(totals)}.`
+    );
+  }
+
+  /** Sets puzzleSubmitter.solverTimeoutSeconds for this workspace. */
+  async editTimeout(): Promise<void> {
+    if (!this.folder) return;
+    const current = resolveSolverTimeoutSeconds(this.folder);
+    const answer = await vscode.window.showInputBox({
+      title: 'Timeout per solution, in seconds',
+      prompt: 'A solution still running after this long is killed and gets no time. Applies to every run, not only timing.',
+      value: String(current),
+      validateInput: (text) => (/^[1-9]\d*$/.test(text.trim()) ? undefined : 'A whole number of seconds, at least 1'),
+    });
+    if (answer === undefined) return;
+    await vscode.workspace
+      .getConfiguration('puzzleSubmitter', this.folder)
+      .update('solverTimeoutSeconds', Number(answer.trim()), vscode.ConfigurationTarget.Workspace);
+    vscode.window.showInformationMessage(`Puzzle Submitter: timeout set to ${answer.trim()} s for this workspace.`);
+  }
+
   async syncWithSite(): Promise<void> {
     if (!this.provider || !this.folder) return;
     const provider = this.provider;
     const folder = this.folder;
     const state = this.extensionContext.workspaceState;
 
-    const jobs: { group: string; index: string; filePath: string }[] = [];
-    for (const [group, perGroup] of this.quests) {
-      for (const [index, entry] of perGroup) {
-        jobs.push({ group, index, filePath: entry.filePath });
-      }
-    }
-    // this.quests iterates in whatever order the filesystem happened to hand back
-    // findFiles() results — sort into the same event-then-index order the tree itself
-    // displays (see sortGroups/groupSortKey), so progress reads predictably instead of
-    // jumping around or interleaving unrelated group categories (e.g. EC years/stories).
-    const groupKey = (g: string) => (provider.groupSortKey ? provider.groupSortKey(g) : g);
-    jobs.sort((a, b) => groupKey(a.group).localeCompare(groupKey(b.group)) || Number(a.index) - Number(b.index));
+    const jobs = this.sortedQuests();
     if (jobs.length === 0) {
       vscode.window.showInformationMessage('Puzzle Submitter: no quests found in this workspace to sync.');
       return;
@@ -674,6 +790,8 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     const pythonPath = resolvePythonInterpreter(this.folder);
     const timeoutSeconds = resolveSolverTimeoutSeconds(this.folder);
     const max = maxPartFor(this.provider, { group, index, part: 1 });
+    let failed = false;
+    let seconds: number | undefined; // of the last part's run, which went through every part
     for (let part = 1; part <= max; part++) {
       if (cancelToken?.isCancellationRequested) break;
       const ctx: PuzzleContext = { group, index, part };
@@ -689,16 +807,65 @@ export class PuzzleTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             timeoutSeconds,
             this.folder,
             this.extensionContext.workspaceState,
-            cancelToken
+            cancelToken,
+            (taken) => (seconds = taken)
           )
         : ({ status: 'error', message: `${this.provider.label} has no solver() runner for this quest.` } as PartBenchmark);
       this.partResults.set(partKey(group, index, part), result);
+      if (result.status === 'error') failed = true;
       if (result.status === 'match') tally.match++;
       else if (result.status === 'mismatch') tally.mismatch++;
       else tally.other++;
     }
     this.questResults.set(questKey(group, index), tally);
+    // A cancelled run is partial, so it says nothing about how long the solution takes. A
+    // failed one has no time, and an older time would no longer describe the solution.
+    const gridos = this.provider.id === 'everybodycodes' && isGridosGroup(group);
+    if (!gridos && !cancelToken?.isCancellationRequested) {
+      this.times = await setTime(this.extensionContext.workspaceState, this.provider.id, group, index, failed ? undefined : seconds);
+    }
     return tally;
+  }
+
+  /** Writes the scoreboard — every event of the workspace, from the solved parts and the
+   * times of the last runs — into README.md, between its markers. */
+  async addScoreboardToReadme(): Promise<void> {
+    if (!this.provider || !this.folder) return;
+    const provider = this.provider;
+    const state = this.extensionContext.workspaceState;
+    const rows: ScoreboardRow[] = this.sortGroups([...this.quests.keys()]).map((group) => ({
+      label: this.groupLabel(group),
+      days: [...(this.quests.get(group) ?? new Map<string, QuestEntry>()).keys()]
+        .sort((a, b) => Number(a) - Number(b))
+        .map((index) => {
+          const ctx: PuzzleContext = { group, index, part: 1 };
+          return {
+            index,
+            solved: getSolvedParts(state, provider, ctx).length,
+            parts: maxPartFor(provider, ctx),
+            seconds: this.times[group]?.[index],
+          };
+        }),
+    }));
+    if (!rows.length) {
+      vscode.window.showInformationMessage('Puzzle Submitter: no puzzle found in this workspace to put on a scoreboard.');
+      return;
+    }
+    if (!rows.some((row) => row.days.some((day) => day.seconds !== undefined))) {
+      const go = await vscode.window.showWarningMessage(
+        'No solution has been timed yet, so the scoreboard would have no times. Use "Run All Quests" (or Sync with Site) first.',
+        'Write it anyway'
+      );
+      if (go !== 'Write it anyway') return;
+    }
+    const footer = await scoreboardFooter(resolvePythonInterpreter(this.folder));
+    const readme = path.join(this.folder.uri.fsPath, 'README.md');
+    const done = writeScoreboard(readme, renderScoreboard(rows, footer), path.basename(this.folder.uri.fsPath));
+    const open = await vscode.window.showInformationMessage(
+      `Scoreboard ${done === 'replaced' ? 'updated in' : done === 'added' ? 'added to' : 'written to a new'} README.md.`,
+      'Open README'
+    );
+    if (open) await vscode.window.showTextDocument(vscode.Uri.file(readme));
   }
 
   private reportTally(label: string, tally: Tally): void {

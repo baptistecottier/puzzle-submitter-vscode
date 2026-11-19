@@ -1,34 +1,50 @@
 import * as vscode from 'vscode';
 import { PuzzleProvider } from '../types';
-import { hasLocalInput, clearLocalInput } from './localInput';
-import { listSolvedPuzzles, clearProgress } from './progress';
+import { promptAndSaveToken } from './auth';
+import { clearLocalInput } from './localInput';
+import { clearProgress } from './progress';
+import { clearSubmissionHistory } from './submitHistory';
 
 /**
- * Called right after explicitly setting a new token — not on requireToken's silent
- * fallback for an unrelated action, only when the user deliberately went through "Set
- * Token". Neither the local input cache nor recorded progress is scoped per-account, so
- * switching to a different account's token (e.g. a demo account) would otherwise keep
- * showing the previous account's cached input and solved/answer state as if it belonged
- * to the new one. Silently does nothing if there's no local data to clear, so this never
- * bothers a genuine first-time setup.
+ * "Update" replaces the token of the same account (an expired cookie, say) and keeps
+ * everything. "Switch account" also clears what belonged to the old account: neither the
+ * cached input, nor recorded answers, nor the submission history is scoped per account,
+ * so they'd otherwise show up as the new one's. Cancelling the token prompt changes nothing.
  */
-export async function offerToClearStaleData(
-  folder: vscode.WorkspaceFolder,
+export type TokenChange = 'update' | 'switch';
+
+export async function changeToken(
+  change: TokenChange,
+  folder: vscode.WorkspaceFolder | undefined,
   provider: PuzzleProvider,
+  secrets: vscode.SecretStorage,
   workspaceState: vscode.Memento
-): Promise<void> {
-  const inputCached = hasLocalInput(folder, provider.id);
-  const solvedCount = listSolvedPuzzles(workspaceState, provider).length;
-  if (!inputCached && solvedCount === 0) return;
-
-  const choice = await vscode.window.showWarningMessage(
-    `Puzzle Submitter: clear locally cached input and recorded answers for ${provider.label} in this workspace? Useful when this token is for a different account — the old data doesn't apply to it and can look wrong (stale input, answers that aren't actually solved on this account).`,
-    { modal: true },
-    'Clear Data'
+): Promise<boolean> {
+  const token = await promptAndSaveToken(secrets, provider, change === 'switch' ? 'the other account' : undefined);
+  if (!token) return false;
+  if (change === 'update') {
+    vscode.window.showInformationMessage(`Puzzle Submitter: token updated for ${provider.label}.`);
+    return true;
+  }
+  if (folder) clearLocalInput(folder, provider.id);
+  await clearProgress(workspaceState, provider);
+  await clearSubmissionHistory(workspaceState, provider);
+  vscode.window.showInformationMessage(
+    `Puzzle Submitter: switched ${provider.label} account — the previous one's cached input, answers and submission history were cleared.`
   );
-  if (choice !== 'Clear Data') return;
+  return true;
+}
 
-  if (inputCached) clearLocalInput(folder, provider.id);
-  if (solvedCount > 0) await clearProgress(workspaceState, provider);
-  vscode.window.showInformationMessage(`Puzzle Submitter: cleared local ${provider.label} data for this workspace.`);
+/** For the command palette, where there's no pair of links: a token already set gets the
+ * choice, a first one is just asked for. */
+export async function pickTokenChange(hasToken: boolean): Promise<TokenChange | undefined> {
+  if (!hasToken) return 'update';
+  const picked = await vscode.window.showQuickPick(
+    [
+      { label: 'Update token', description: 'same account, e.g. the cookie expired', change: 'update' as const },
+      { label: 'Switch account', description: "clears this site's cached input, answers and history", change: 'switch' as const },
+    ],
+    { title: 'A token is already set' }
+  );
+  return picked?.change;
 }

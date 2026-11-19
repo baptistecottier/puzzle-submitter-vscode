@@ -133,6 +133,35 @@ test("a generator-based solver (yield) is consumed into real values, not '<gener
   assert.deepEqual(parts, ['5', '10']);
 });
 
+test("a list goes to solver(*args) when solver() declares several required arguments", async () => {
+  const solution = tmpFile(
+    'day_20.py',
+    'def preprocessing(data):\n    return [data, 2]\n\ndef solver(text, count):\n    return text * count\n'
+  );
+  const { parts } = await runPythonSolver('python3', solution, { '1': 'ab' }, 'text', 1, path.dirname(solution), 60);
+  assert.deepEqual(parts, ['abab']);
+});
+
+test("'parts-dict' shape: a tuple goes to solver(*args) when solver() declares several arguments, and stays whole otherwise", async () => {
+  const pre = 'def preprocessing(data):\n    return data[1], data[2]\n\n';
+  const run = (name: string, solver: string) => {
+    const solution = tmpFile(name, pre + solver);
+    return runPythonSolver('python3', solution, { '1': 'a', '2': 'b' }, 'parts-dict', 1, path.dirname(solution), 60);
+  };
+  assert.deepEqual((await run('q1.py', 'def solver(x, y):\n    return x + y\n')).parts, ['ab']);
+  assert.deepEqual((await run('q2.py', 'def solver(*args):\n    return len(args)\n')).parts, ['2']);
+  assert.deepEqual((await run('q3.py', 'def solver(pair):\n    return len(pair)\n')).parts, ['2']);
+});
+
+test("a parameter an example run fills by name doesn't make a list spread", async () => {
+  const solution = tmpFile(
+    'day_21.py',
+    'def preprocessing(data):\n    return [1, 2, 3]\n\ndef solver(values, example):\n    return len(values)\n'
+  );
+  const { parts } = await runPythonSolver('python3', solution, { '1': 'x' }, 'text', 1, path.dirname(solution), 60, undefined, {});
+  assert.deepEqual(parts, ['3']);
+});
+
 test('a generator-based solver is only consumed up to the requested part, so part 2 code never runs during a part 1 run (examples often only have a part 1 answer)', async () => {
   const solution = tmpFile(
     'day_07.py',
@@ -233,6 +262,22 @@ test('output captures the solution\'s own print() calls, with the result marker 
   const { parts, output } = await runPythonSolver('python3', solution, { '1': '21' }, 'text', 1, path.dirname(solution), 60);
   assert.deepEqual(parts, ['42']);
   assert.equal(output, 'debug: 21\nmore debug');
+});
+
+test("prints aren't trimmed: leading spaces, blank lines and trailing spaces stay as printed", async () => {
+  const solution = tmpFile(
+    'day_12.py',
+    'def solver(data):\n    print()\n    print("  #.")\n    print(" .# ")\n    print()\n    return 1\n'
+  );
+  const { output } = await runPythonSolver('python3', solution, { '1': 'x' }, 'text', 1, path.dirname(solution), 60);
+  assert.equal(output, '\n  #.\n .# \n');
+});
+
+test("a last print with end='' doesn't hide the result: it stays in the output", async () => {
+  const solution = tmpFile('day_13.py', 'def solver(data):\n    print("progress...", end="")\n    return 7\n');
+  const { parts, output } = await runPythonSolver('python3', solution, { '1': 'x' }, 'text', 1, path.dirname(solution), 60);
+  assert.deepEqual(parts, ['7']);
+  assert.equal(output, 'progress...');
 });
 
 test('output is an empty string when the solution prints nothing', async () => {
@@ -340,4 +385,15 @@ test("the timeout doesn't count the time spent waiting for an input() reply", as
   const solution = tmpFile('day_25.py', 'def solver(data):\n    return input()\n');
   const { parts } = await interactiveRun(solution, () => new Promise((resolve) => setTimeout(() => resolve('late'), 1500)), 1);
   assert.deepEqual(parts, ['late']);
+});
+
+test('seconds: measures preprocessing() and solver() only, and keeps the output clean', async () => {
+  const solution = tmpFile(
+    'day_timing.py',
+    'import time\ntime.sleep(0.5)\n\ndef solver(data):\n    time.sleep(0.2)\n    print("tail", end="")\n    return 1\n'
+  );
+  const { parts, output, seconds } = await runPythonSolver('python3', solution, { '1': 'x' }, 'text', 1, path.dirname(solution), 60);
+  assert.deepEqual(parts, ['1']);
+  assert.equal(output, 'tail'); // the timing line never shows up in what the solution printed
+  assert.ok(seconds !== undefined && seconds >= 0.2 && seconds < 0.5, `import time must not count, got ${seconds}`);
 });

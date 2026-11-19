@@ -16,6 +16,12 @@ export function log(message: string): void {
   getOutputChannel().appendLine(line);
 }
 
+/** Appends a solver's prints (or a traceback) as they are, without log()'s timestamp in
+ * front of the first line, which would push it out of line with the rest. */
+export function logPrints(text: string): void {
+  getOutputChannel().appendLine(text);
+}
+
 /** Shows a solver failure as a short, one-line notification — a full traceback (or the
  * solution's own prints up to the point it crashed/was killed) is unreadable crammed
  * into a VS Code toast, so it goes to the output channel instead, with a button to jump
@@ -28,7 +34,7 @@ export function showSolverError(error: unknown): void {
     vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`);
     return;
   }
-  log(error.detail);
+  logPrints(error.detail);
   void vscode.window.showErrorMessage(`Puzzle Submitter: ${message}`, 'Show Output').then((choice) => {
     if (choice === 'Show Output') getOutputChannel().show(true);
   });

@@ -5,8 +5,8 @@ import { resolveSite, promptAndSaveSite } from './core/siteResolver';
 import { promptManualContext } from './core/manualContext';
 import { PuzzleSubmitterViewProvider } from './webview/panelProvider';
 import { PuzzleTreeProvider, TreeNode } from './tree/puzzleTreeProvider';
-import { requireToken, promptAndSaveToken, clearToken } from './core/auth';
-import { offerToClearStaleData } from './core/accountSwitch';
+import { getToken, requireToken, clearToken } from './core/auth';
+import { changeToken, pickTokenChange } from './core/accountSwitch';
 import { getConfiguredRunCommand, runCommandForAnswer } from './core/runCommand';
 import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from './core/pythonInterpreter';
 import { canRunSolver, runPythonSolver } from './core/pythonRunner';
@@ -14,7 +14,8 @@ import { maxPartFor } from './core/puzzleParts';
 import { ensureLocalInput } from './core/ensureInput';
 import { inputFileSaver, readLocalInput, siteInputPath, writeLocalInput } from './core/localInput';
 import { nextUnsolvedPart } from './core/progress';
-import { guardSubmit } from './core/submitGuard';
+import { confirmResend, guardSubmit } from './core/submitGuard';
+import { recordSubmission } from './core/submitHistory';
 import { checkWithoutSubmitting } from './core/publishedAnswers';
 import { recordSubmitResult, describeSubmitResult } from './core/submitRecorder';
 import { getStatusBarItem, refreshStatusBar } from './core/statusBar';
@@ -198,8 +199,11 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
       return;
     }
     // Nothing to judge it by: hand it over for the site instead.
+    if ((await confirmResend(context.workspaceState, provider, ctx, answer, 'Copy Again')) === 'cancelled') return;
     await vscode.env.clipboard.writeText(answer);
     await vscode.env.openExternal(vscode.Uri.parse(provider.puzzleUrl(ctx)));
+    await recordSubmission(context.workspaceState, provider, ctx, answer, 'copied');
+    void panelProvider?.refresh();
     vscode.window.showInformationMessage(
       `${provider.label} has no submission API — answer "${answer}" copied to the clipboard, puzzle page opened.`
     );
@@ -209,7 +213,7 @@ async function submitAnswerCommand(context: vscode.ExtensionContext): Promise<vo
   const guard = await guardSubmit(context.workspaceState, provider, ctx, answer);
   if (guard === 'cancelled') return;
   if (guard === 'skip') {
-    vscode.window.showInformationMessage(`✅ "${answer}" already matches the recorded answer — not submitting again.`);
+    vscode.window.showInformationMessage(`✅ "${answer}" is the right answer (already recorded) — not submitting again.`);
     return;
   }
 
@@ -360,14 +364,13 @@ async function setTokenCommand(context: vscode.ExtensionContext): Promise<void> 
   const siteId = await resolveSite(folder);
   if (!siteId) return;
   const provider = providers[siteId];
-  if (!provider.submit) {
+  if (!provider.submit && !provider.usesToken) {
     vscode.window.showInformationMessage(`${provider.label} has no submission API, so no token is needed.`);
     return;
   }
-  const token = await promptAndSaveToken(context.secrets, provider);
-  if (token) {
-    vscode.window.showInformationMessage(`Puzzle Submitter: token saved for ${provider.label}.`);
-    if (folder) await offerToClearStaleData(folder, provider, context.workspaceState);
+  const change = await pickTokenChange(Boolean(await getToken(context.secrets, provider)));
+  if (!change) return;
+  if (await changeToken(change, folder, provider, context.secrets, context.workspaceState)) {
     void panelProvider?.refresh();
     void treeProvider?.refresh();
   }
@@ -411,6 +414,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('puzzleSubmitter.tree.refresh', () => tree.refresh()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.filter', () => tree.pickFilter()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.sync', () => tree.syncWithSite()),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.addScoreboard', () => tree.addScoreboardToReadme()),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.timing', () => tree.pickTiming()),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.measureTimes', () => tree.measureTimes()),
+    vscode.commands.registerCommand('puzzleSubmitter.tree.setTimeout', () => tree.editTimeout()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.newEvent', () => tree.newEvent()),
     vscode.commands.registerCommand('puzzleSubmitter.tree.benchmarkQuest', (node: TreeNode) => {
       if (node?.kind === 'quest') return tree.benchmarkQuest(node);

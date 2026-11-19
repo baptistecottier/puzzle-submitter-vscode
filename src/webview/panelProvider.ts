@@ -5,14 +5,15 @@ import { inputDocumentUri, refreshInputDocuments } from '../core/inputDocument';
 import { FetchedExamples, PuzzleContext, PuzzleProvider } from '../types';
 import { providers } from '../providers';
 import { peekSite, promptAndSaveSite } from '../core/siteResolver';
-import { getToken, requireToken, promptAndSaveToken, clearToken } from '../core/auth';
-import { offerToClearStaleData } from '../core/accountSwitch';
+import { clearToken, getToken, requireToken } from '../core/auth';
+import { changeToken } from '../core/accountSwitch';
 import { getConfiguredRunCommand, runCommandForAnswer } from '../core/runCommand';
 import { resolvePythonInterpreter, resolveSolverTimeoutSeconds } from '../core/pythonInterpreter';
 import { canRunSolver, runPythonSolver, SolverError } from '../core/pythonRunner';
 import { maxPartFor } from '../core/puzzleParts';
 import { nextUnsolvedPart } from '../core/progress';
-import { guardSubmit } from '../core/submitGuard';
+import { confirmResend, guardSubmit } from '../core/submitGuard';
+import { getSubmissionHistory, HistoryEntry, recordSubmission, setVerdict } from '../core/submitHistory';
 import { checkWithoutSubmitting } from '../core/publishedAnswers';
 import { recordSubmitResult, describeSubmitResult } from '../core/submitRecorder';
 import { promptManualContext } from '../core/manualContext';
@@ -30,7 +31,7 @@ import {
   siteExamplesPath,
   writeExamples,
 } from '../core/examples';
-import { askForSolverInput, getOutputChannel, log, showFetchError, showSolverError } from '../core/output';
+import { askForSolverInput, getOutputChannel, log, logPrints, showFetchError, showSolverError } from '../core/output';
 import { getWebviewHtml } from './panelHtml';
 import { GridosPanel, GridosPanelState } from './gridosPanel';
 
@@ -50,6 +51,9 @@ interface PanelState {
   inputPreview?: { text: string; fullLength: number; truncated: boolean };
   hasToken: boolean;
   supportsSubmit: boolean;
+  usesToken: boolean;
+  /** Past submissions of the active part, newest first. */
+  history?: HistoryEntry[];
   /** No submission API, but published answers to check against (Coding Quest): "Submit"
    * judges the answer locally instead of copying it to paste on the site. */
   checksLocally: boolean;
@@ -95,8 +99,11 @@ type WebviewMessage =
   | { type: 'openExamples' }
   | { type: 'runCommand' }
   | { type: 'setToken' }
+  | { type: 'updateToken' }
+  | { type: 'switchAccount' }
   | { type: 'clearToken' }
-  | { type: 'submit'; answer: string };
+  | { type: 'submit'; answer: string }
+  | { type: 'setVerdict'; answer: string; verdict: 'correct' | 'incorrect' | 'copied' };
 
 /** Sidebar form for the current file's puzzle, so day-to-day use doesn't need the
  * command palette. All actual logic (network, files, Python) lives in ../core and
@@ -241,6 +248,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       inputCached: false,
       hasToken: false,
       supportsSubmit: false,
+      usesToken: false,
       checksLocally: false,
       supportsFetch: false,
       supportsSolver: false,
@@ -274,6 +282,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
         : undefined,
       hasToken,
       supportsSubmit: Boolean(this.provider.submit),
+      usesToken: Boolean(this.provider.usesToken),
       checksLocally: !this.provider.submit && Boolean(this.provider.fetchPublishedAnswers),
       supportsFetch: Boolean(this.provider.fetchInput),
       supportsSolver,
@@ -287,6 +296,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
           : undefined,
       hasRunCommand: Boolean(getConfiguredRunCommand(folder)),
       lastResult: this.lastResult,
+      history: this.ctx ? getSubmissionHistory(this.extensionContext.workspaceState, this.provider, this.ctx) : [],
       runOnSave: this.runOnSave,
       saveRunNote: this.saveRunNote,
       ...(this.ctx && GridosPanel.applies(this.provider, this.ctx)
@@ -389,16 +399,25 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       case 'runCommand':
         return this.runConfiguredCommand();
       case 'setToken':
+      case 'updateToken':
+      case 'switchAccount':
         if (this.provider) {
-          const token = await promptAndSaveToken(this.extensionContext.secrets, this.provider);
-          const folder = this.currentFolder();
-          if (token && folder) await offerToClearStaleData(folder, this.provider, this.extensionContext.workspaceState);
+          const change = msg.type === 'switchAccount' ? 'switch' : 'update';
+          const changed = await changeToken(change, this.currentFolder(), this.provider, this.extensionContext.secrets, this.extensionContext.workspaceState);
+          if (changed && change === 'switch') await vscode.commands.executeCommand('puzzleSubmitter.tree.refresh');
           await this.postState();
         }
         return;
       case 'clearToken':
         if (this.provider) {
           await clearToken(this.extensionContext.secrets, this.provider);
+          await this.postState();
+        }
+        return;
+      case 'setVerdict':
+        if (this.provider && this.ctx && !this.provider.submit) {
+          await setVerdict(this.extensionContext.workspaceState, this.provider, this.ctx, msg.answer, msg.verdict);
+          await vscode.commands.executeCommand('puzzleSubmitter.tree.refresh');
           await this.postState();
         }
         return;
@@ -543,7 +562,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       if (/cancelled/i.test(message)) {
         if (!this.rerunAfterCancel) vscode.window.setStatusBarMessage('Puzzle Submitter: solver run cancelled.', 3000);
       } else if (trigger === 'save') {
-        if (error instanceof SolverError && error.detail) log(error.detail);
+        if (error instanceof SolverError && error.detail) logPrints(error.detail);
         this.noteSaveRun(false, message);
       } else {
         showSolverError(error);
@@ -683,7 +702,10 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
       this.exampleRuns = { key: this.exampleRunsKey(solutionFile, ctx), runs };
       const channel = getOutputChannel();
       for (const run of runs) {
-        if (run.status === 'error' && run.detail) log(`Example ${run.index}: ${run.message}\n${run.detail}`);
+        if (run.status === 'error' && run.detail) {
+          log(`Example ${run.index}: ${run.message}`);
+          logPrints(run.detail);
+        }
         if (withPrints && run.status !== 'error') {
           channel.appendLine(`--- solver() prints — example ${run.index}, part ${ctx.part} ---`);
           channel.appendLine(run.output || '(nothing printed)');
@@ -738,8 +760,11 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
         this.lastResult = { status: 'incorrect', message: `❌ "${answer}" is not the right answer.` };
       } else {
         // Nothing to judge it by: hand it over for the site instead.
+        const state = this.extensionContext.workspaceState;
+        if ((await confirmResend(state, this.provider, this.ctx, answer, 'Copy Again')) === 'cancelled') return;
         await vscode.env.clipboard.writeText(answer);
         await vscode.env.openExternal(vscode.Uri.parse(this.provider.puzzleUrl(this.ctx)));
+        await recordSubmission(state, this.provider, this.ctx, answer, 'copied');
         this.lastResult = {
           status: 'copied',
           message: `No published answer to check against — answer copied, puzzle page opened.`,
@@ -752,7 +777,7 @@ export class PuzzleSubmitterViewProvider implements vscode.WebviewViewProvider {
     const guard = await guardSubmit(this.extensionContext.workspaceState, this.provider, this.ctx, answer);
     if (guard === 'cancelled') return;
     if (guard === 'skip') {
-      this.lastResult = { status: 'already-solved', message: `"${answer}" already matches the recorded answer — not submitting again.` };
+      this.lastResult = { status: 'correct', message: `✅ "${answer}" is the right answer (already recorded) — not submitting again.` };
       await this.postState();
       return;
     }

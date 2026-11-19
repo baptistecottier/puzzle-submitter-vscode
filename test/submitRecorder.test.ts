@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { recordSubmitResult, describeSubmitResult } from '../src/core/submitRecorder';
 import { getRecordedAnswer, getSolvedParts } from '../src/core/progress';
+import { getSubmissionHistory } from '../src/core/submitHistory';
 import { PuzzleContext, PuzzleProvider, SubmitResult } from '../src/types';
 
 // Minimal in-memory stand-in for vscode.Memento — only what progress.ts actually calls.
@@ -90,9 +91,9 @@ test('describeSubmitResult: appends the recorded answer when it differs from wha
   assert.equal(describeSubmitResult(result, '999', '20'), 'Already solved. (recorded answer: 20)');
 });
 
-test('describeSubmitResult: leaves the message alone when the recorded answer matches what was submitted', () => {
+test('describeSubmitResult: says the answer is right when it matches the recorded one', () => {
   const result: SubmitResult = { status: 'already-solved', message: 'Already solved.' };
-  assert.equal(describeSubmitResult(result, '20', '20'), 'Already solved.');
+  assert.equal(describeSubmitResult(result, '20', '20'), 'Already solved. "20" is the right answer.');
 });
 
 test('describeSubmitResult: leaves the message alone when nothing was recovered', () => {
@@ -103,4 +104,14 @@ test('describeSubmitResult: leaves the message alone when nothing was recovered'
 test('describeSubmitResult: never touches the message for a "correct" result', () => {
   const result: SubmitResult = { status: 'correct', message: "That's the right answer!" };
   assert.equal(describeSubmitResult(result, '42', '42'), "That's the right answer!");
+});
+
+test('recordSubmitResult: "already-solved" with the recorded answer itself goes in the history as right', async () => {
+  const state = new FakeMemento() as unknown as import('vscode').Memento;
+  const provider = { id: 'i18n-puzzles', fetchRecordedAnswers: async () => ['10', '20'] } as unknown as PuzzleProvider;
+  const result: SubmitResult = { status: 'already-solved', message: 'Already solved.' };
+  await recordSubmitResult(state, provider, ctx, '20', result, 'token', 'contact');
+  await recordSubmitResult(state, provider, ctx, '999', result, 'token', 'contact');
+  const statuses = Object.fromEntries(getSubmissionHistory(state, provider, ctx).map((e) => [e.answer, e.status]));
+  assert.deepEqual(statuses, { '20': 'correct', '999': 'already-solved' });
 });

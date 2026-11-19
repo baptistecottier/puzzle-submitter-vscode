@@ -29,6 +29,7 @@
     "codyssi",
     "i18n-puzzles",
     "coding quest",
+    "systems check",
     "puzzle",
     "python"
   ],
@@ -53,7 +54,7 @@
       },
       {
         "command": "puzzleSubmitter.setToken",
-        "title": "Puzzle Submitter: Set Token for Current Site"
+        "title": "Puzzle Submitter: Set, Update or Switch Account Token for Current Site"
       },
       {
         "command": "puzzleSubmitter.clearToken",
@@ -62,6 +63,23 @@
       {
         "command": "puzzleSubmitter.setSite",
         "title": "Puzzle Submitter: Set Site for Workspace"
+      },
+      {
+        "command": "puzzleSubmitter.tree.timing",
+        "title": "Puzzle Submitter: Times (Measure, Timeout, README Scoreboard)",
+        "icon": "$(watch)"
+      },
+      {
+        "command": "puzzleSubmitter.tree.measureTimes",
+        "title": "Puzzle Submitter: Measure Solution Times"
+      },
+      {
+        "command": "puzzleSubmitter.tree.setTimeout",
+        "title": "Puzzle Submitter: Set Solver Timeout"
+      },
+      {
+        "command": "puzzleSubmitter.tree.addScoreboard",
+        "title": "Puzzle Submitter: Add Scoreboard to README"
       },
       {
         "command": "puzzleSubmitter.tree.refresh",
@@ -148,6 +166,11 @@
           "command": "puzzleSubmitter.tree.refresh",
           "when": "view == puzzleSubmitter.tree",
           "group": "navigation"
+        },
+        {
+          "command": "puzzleSubmitter.tree.timing",
+          "when": "view == puzzleSubmitter.tree",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -183,14 +206,16 @@
             "everybodycodes",
             "codyssi",
             "i18n-puzzles",
-            "codingquest"
+            "codingquest",
+            "systemscheck"
           ],
           "enumDescriptions": [
             "Advent of Code",
             "Everybody Codes",
             "Codyssi",
             "i18n-puzzles",
-            "Coding Quest"
+            "Coding Quest",
+            "Systems Check"
           ],
           "scope": "window",
           "description": "Which puzzle site this workspace submits to. Left unset, you'll be asked the first time you run a command."
